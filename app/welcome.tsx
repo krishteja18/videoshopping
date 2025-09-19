@@ -5,16 +5,16 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    Image,
-    Platform,
-    StatusBar,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  Platform,
+  StatusBar,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { Text } from 'react-native-paper';
 
@@ -46,14 +46,6 @@ export default function WelcomeScreen() {
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
 
   useEffect(() => {
-    // Configure Google Sign-In
-    GoogleSignin.configure({
-      webClientId: '679113462565-vgbtackvs817n3ma17it54usdof3d86q.apps.googleusercontent.com',
-      offlineAccess: true,
-      forceCodeForRefreshToken: false,
-      scopes: ['profile', 'email'],
-    });
-
     // Check Apple Sign In availability
     if (Platform.OS === 'ios') {
       AppleAuthentication.isAvailableAsync().then(setIsAppleAvailable);
@@ -80,43 +72,136 @@ export default function WelcomeScreen() {
     ]).start();
   }, []);
 
-  const handleGoogleSignIn = async () => {
-    setIsLoading(true);
-    try {
-      // Check if Google Play Services are available
-      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      
-      // Show native Google account chooser dialog (like Zomato)
-      const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken;
-      
-      if (!idToken) {
-        throw new Error('No idToken returned from Google');
-      }
 
-      console.log('✅ Native Google Sign-In successful, signing into Supabase...');
 
-      // Sign in to Supabase with the Google ID token
-      const { data, error } = await supabase.auth.signInWithIdToken({
-        provider: 'google',
-        token: idToken,
-      });
+// In welcome.tsx, update the handleGoogleSignIn function
+// const handleGoogleSignIn = async () => {
+//   setIsLoading(true);
+//   try {
+//     // Check if Google Play Services are available with better error handling
+//     const playServicesAvailable = await GoogleSignin.hasPlayServices({
+//       showPlayServicesUpdateDialog: true,
+//     });
+    
+//     if (!playServicesAvailable) {
+//       throw new Error('Google Play Services not available');
+//     }
+    
+//     // Show native Google account chooser dialog (like Zomato)
+//     const userInfo = await GoogleSignin.signIn();
+//     const idToken = userInfo.data?.idToken;
+    
+//     if (!idToken) {
+//       throw new Error('No idToken returned from Google');
+//     }
 
-      if (error) throw error;
+//     console.log('✅ Native Google Sign-In successful, signing into Supabase...');
 
-      console.log('✅ Supabase sign-in successful:', data.session?.user);
-      
-    } catch (error: any) {
-      console.error('Native Google sign in error:', error);
-      if (error.code === '10') {
-        Alert.alert('Google Sign-In Error', 'Your device needs Google Play Services to sign in with Google.');
-      } else {
-        Alert.alert('Google Sign-In failed', error.message || 'Unexpected error');
-      }
-    } finally {
-      setIsLoading(false);
+//     // Sign in to Supabase with the Google ID token
+//     const { data, error } = await supabase.auth.signInWithIdToken({
+//       provider: 'google',
+//       token: idToken,
+//     });
+
+//     if (error) throw error;
+
+//     console.log('✅ Supabase sign-in successful:', data.session?.user);
+    
+//     // Add this additional check right after login
+//     const immediateCheck = await supabase.auth.getSession();
+//     console.log('🔍 Immediate session check after login:', immediateCheck.data.session ? `EXISTS - ${immediateCheck.data.session.user.email}` : 'NULL');
+    
+//   } catch (error: any) {
+//     console.error('Native Google sign in error:', error);
+    
+//     // More specific error messages
+//     if (error.code === 'PLAY_SERVICES_NOT_AVAILABLE') {
+//       Alert.alert(
+//         'Google Play Services Required', 
+//         'Please update Google Play Services from the Play Store to continue.'
+//       );
+//     } else {
+//       Alert.alert('Google Sign-In failed', error.message || 'Unexpected error');
+//     }
+//   } finally {
+//     setIsLoading(false);
+//   }
+// };
+
+const handleGoogleSignIn = async () => {
+  setIsLoading(true);
+  try {
+    // Check if Google Play Services are available with better error handling
+    const playServicesAvailable = await GoogleSignin.hasPlayServices({
+      showPlayServicesUpdateDialog: true,
+    });
+    
+    if (!playServicesAvailable) {
+      throw new Error('Google Play Services not available');
     }
-  };
+    
+    // Show native Google account chooser dialog (like Zomato)
+    const userInfo = await GoogleSignin.signIn();
+    
+    // Check if sign-in was cancelled
+    if (!userInfo || !userInfo.data) {
+      console.log('👤 User cancelled Google sign-in');
+      return; // Exit silently without showing error
+    }
+    
+    const idToken = userInfo.data?.idToken;
+    
+    if (!idToken) {
+      throw new Error('No idToken returned from Google');
+    }
+
+    console.log('✅ Native Google Sign-In successful, signing into Supabase...');
+
+    // Sign in to Supabase with the Google ID token
+    const { data, error } = await supabase.auth.signInWithIdToken({
+      provider: 'google',
+      token: idToken,
+    });
+
+    if (error) throw error;
+
+    console.log('✅ Supabase sign-in successful:', data.session?.user);
+    
+    // Add this additional check right after login
+    const immediateCheck = await supabase.auth.getSession();
+    console.log('🔍 Immediate session check after login:', immediateCheck.data.session ? `EXISTS - ${immediateCheck.data.session.user.email}` : 'NULL');
+    
+  } catch (error: any) {
+    console.error('Native Google sign in error:', error);
+    
+    // Handle user cancellation - don't show error alert
+    if (error.code === 'SIGN_IN_CANCELLED' || 
+        error.code === '-5' || // User cancelled
+        error.code === 'CANCELED' ||
+        error.code === '12501' || // User cancelled (Android)
+        error.message?.includes('cancelled') ||
+        error.message?.includes('canceled') ||
+        error.message?.toLowerCase().includes('user cancelled')) {
+      console.log('👤 User cancelled Google sign-in');
+      return; // Exit silently without showing error
+    }
+    
+    // More specific error messages for actual errors
+    if (error.code === 'PLAY_SERVICES_NOT_AVAILABLE') {
+      Alert.alert(
+        'Google Play Services Required', 
+        'Please update Google Play Services from the Play Store to continue.'
+      );
+    } else {
+      Alert.alert('Google Sign-In failed', error.message || 'Unexpected error');
+    }
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+// In welcome.tsx, update the handleGoogleSignIn function
+
 
   const handleFacebookSignIn = async () => {
     setIsLoading(true);
@@ -235,7 +320,7 @@ export default function WelcomeScreen() {
               {isLoading && <ActivityIndicator size="small" color="#757575" />}
             </TouchableOpacity>
 
-            {/* Facebook Sign In */}
+            {/* Facebook Sign In
             <TouchableOpacity
               style={[styles.socialButton, styles.facebookButton]}
               onPress={handleFacebookSignIn}
@@ -245,7 +330,7 @@ export default function WelcomeScreen() {
               <FacebookIcon />
               <Text style={styles.facebookButtonText}>Continue with Facebook</Text>
               {isLoading && <ActivityIndicator size="small" color="#FFFFFF" />}
-            </TouchableOpacity>
+            </TouchableOpacity> */}
 
             {/* Apple Sign In (iOS only) */}
             {isAppleAvailable && (
@@ -389,9 +474,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'Nunito-SemiBold',
     color: '#333333',
-    flex: 1,
     textAlign: 'center',
-    marginRight: 24,
+    // Remove flex: 1 and marginRight to bring text closer to icon
   },
   facebookButton: {
     backgroundColor: '#1877F2',

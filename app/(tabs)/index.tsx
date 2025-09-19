@@ -1,7 +1,9 @@
-import { Image } from 'expo-image';
-import { StyleSheet, ScrollView, View, Text, TouchableOpacity } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { supabase } from '@/lib/supabase';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { Image } from 'expo-image';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Sample data for social media posts
 const samplePosts = [
@@ -32,14 +34,64 @@ const samplePosts = [
 ];
 
 export default function HomeScreen() {
+  const handleSignOut = async () => {
+    console.log('[SignOut] start');
+    let googleDone = false;
+    try {
+      // Optional quick check
+      const hadPrev = await GoogleSignin.hasPreviousSignIn();
+      console.log('[SignOut] hasPreviousSignIn =', hadPrev);
+
+      try {
+        await GoogleSignin.signOut();
+        googleDone = true;
+        console.log('[SignOut] Google signOut OK');
+      } catch (gErr: any) {
+        console.log('[SignOut] Google signOut error code:', gErr?.code, 'msg:', gErr?.message);
+        // Common benign: statusCodes.SIGN_IN_REQUIRED (no cached user)
+        if (gErr?.code === statusCodes.SIGN_IN_REQUIRED) {
+          console.log('[SignOut] No cached Google user – continuing.');
+        }
+      }
+
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.log('[SignOut] Supabase signOut error:', error.message);
+      } else {
+        console.log('[SignOut] Supabase signOut OK');
+      }
+
+      // Double-check session cleared
+      const sessionCheck = await supabase.auth.getSession();
+      console.log('[SignOut] Post signOut session:', sessionCheck.data.session);
+
+    } catch (e) {
+      console.log('[SignOut] Unexpected wrapper error:', e);
+    } 
+   
+  };
+
+
+   // finally {
+    //   // Fallback navigation in case listener did not fire
+    //   setTimeout(() => {
+    //     console.log('[SignOut] Forcing navigation to welcome');
+    //     router.replace('/welcome');
+    //   }, 100);
+    // }
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
       <ThemedView style={styles.header}>
         <ThemedText type="title" style={styles.headerTitle}>SwipeKart</ThemedText>
-        <TouchableOpacity style={styles.headerButton}>
-          <ThemedText style={styles.headerButtonText}>📷</ThemedText>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity style={styles.headerButton}>
+            <ThemedText style={styles.headerButtonText}>📷</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerButton} onPress={handleSignOut}>
+            <ThemedText style={styles.headerButtonText}>🚪</ThemedText>
+          </TouchableOpacity>
+        </View>
       </ThemedView>
 
       {/* Feed */}

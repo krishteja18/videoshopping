@@ -1,6 +1,101 @@
+// import { Nunito_400Regular, Nunito_500Medium, Nunito_600SemiBold, Nunito_700Bold, useFonts } from '@expo-google-fonts/nunito';
+// import { GoogleSignin } from '@react-native-google-signin/google-signin';
+// import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+// import { Stack } from 'expo-router';
+// import * as SplashScreen from 'expo-splash-screen';
+// import { StatusBar } from 'expo-status-bar';
+// import { useEffect, useState } from 'react';
+// import 'react-native-reanimated';
+
+// import CustomSplashScreen from '@/components/SplashScreenModern';
+// import { useColorScheme } from '@/hooks/useColorScheme';
+// import { supabase } from '@/lib/supabase';
+// import { useRouter } from 'expo-router';
+
+// // Prevent the splash screen from auto-hiding before asset loading is complete.
+// SplashScreen.preventAutoHideAsync();
+
+// GoogleSignin.configure({
+//   webClientId: '679113462565-t3tdajb4ekoqn2jlkegnvcbvuo41m01f.apps.googleusercontent.com',
+//   offlineAccess: true,
+//   scopes: ['profile','email'],
+// });
+
+// export default function RootLayout() {
+//   const colorScheme = useColorScheme();
+//   const [appIsReady, setAppIsReady] = useState(false);
+//   const [showCustomSplash, setShowCustomSplash] = useState(true);
+//   const [loaded] = useFonts({
+//     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+//     // Nunito font variants
+//     'Nunito-Regular': Nunito_400Regular,
+//     'Nunito-Medium': Nunito_500Medium,
+//     'Nunito-SemiBold': Nunito_600SemiBold,
+//     'Nunito-Bold': Nunito_700Bold,
+//   });
+//   const router = useRouter();
+
+//   useEffect(() => {
+//     async function prepare() {
+//       try {
+//         if (loaded) {
+//           await SplashScreen.hideAsync();
+//           setAppIsReady(true);
+//         }
+//       } catch (e) {
+//         console.warn(e);
+//       }
+//     }
+
+//     prepare();
+//   }, [loaded]);
+  
+
+//   useEffect(() => {
+//     const { data: { subscription } } = supabase.auth.onAuthStateChange(
+//       async (event, session) => {
+//         if (event === 'SIGNED_IN' && session) {
+//           console.log('User signed in:', session.user);
+//           router.replace('/(tabs)');
+//         } else if (event === 'SIGNED_OUT') {
+//           router.replace('/welcome');
+//         }
+//       }
+//     );
+
+//     return () => {
+//       subscription?.unsubscribe();
+//     };
+//   }, []);
+
+//   const onCustomSplashFinish = () => {
+//     console.log('🚀 Splash finished, showing welcome screen!');
+//     setShowCustomSplash(false);
+//   };
+
+//   if (!appIsReady || showCustomSplash) {
+//     return <CustomSplashScreen onAnimationFinish={onCustomSplashFinish} />;
+//   }
+
+//   return (
+//     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+//       <Stack initialRouteName="welcome">
+//         <Stack.Screen name="welcome" options={{ headerShown: false }} />
+//         <Stack.Screen name="auth" options={{ headerShown: false }} />
+//         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+//         <Stack.Screen name="+not-found" />
+//       </Stack>
+//       <StatusBar style="auto" />
+//     </ThemeProvider>
+//   );
+// }
+
+
+
 import { Nunito_400Regular, Nunito_500Medium, Nunito_600SemiBold, Nunito_700Bold, useFonts } from '@expo-google-fonts/nunito';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -8,70 +103,75 @@ import 'react-native-reanimated';
 
 import CustomSplashScreen from '@/components/SplashScreenModern';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { supabase } from '@/lib/supabase';
-import { useRouter } from 'expo-router';
+import { AuthProvider, useAuth } from './providers/AuthProvider';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+GoogleSignin.configure({
+  webClientId: '679113462565-t3tdajb4ekoqn2jlkegnvcbvuo41m01f.apps.googleusercontent.com',
+  offlineAccess: true,
+  scopes: ['profile', 'email'],
+});
+
+// Main Layout Component
+function Layout() {
   const colorScheme = useColorScheme();
-  const [appIsReady, setAppIsReady] = useState(false);
-  const [showCustomSplash, setShowCustomSplash] = useState(true);
+  const { session, isLoading } = useAuth();
+  const [customSplashFinished, setCustomSplashFinished] = useState(false);
+  const router = useRouter();
+
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    // Nunito font variants
     'Nunito-Regular': Nunito_400Regular,
     'Nunito-Medium': Nunito_500Medium,
     'Nunito-SemiBold': Nunito_600SemiBold,
     'Nunito-Bold': Nunito_700Bold,
   });
-  const router = useRouter();
 
+  // Handle navigation based on session changes
   useEffect(() => {
-    async function prepare() {
-      try {
-        if (loaded) {
-          await SplashScreen.hideAsync();
-          setAppIsReady(true);
-        }
-      } catch (e) {
-        console.warn(e);
+    if (!isLoading && customSplashFinished) {
+      console.log('🔄 Navigation effect triggered:', { hasSession: !!session });
+      if (session) {
+        console.log('🔄 Navigating to (tabs)');
+        router.replace('/(tabs)');
+      } else {
+        console.log('🔄 Navigating to welcome');
+        router.replace('/welcome');
       }
     }
-
-    prepare();
-  }, [loaded]);
+  }, [session, isLoading, customSplashFinished]);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' && session) {
-          console.log('User signed in:', session.user);
-          router.replace('/(tabs)');
-        } else if (event === 'SIGNED_OUT') {
-          router.replace('/welcome');
-        }
-      }
-    );
-
-    return () => {
-      subscription?.unsubscribe();
-    };
-  }, []);
+    if (loaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [loaded]);
 
   const onCustomSplashFinish = () => {
-    console.log('🚀 Splash finished, showing welcome screen!');
-    setShowCustomSplash(false);
+    console.log('🎬 Custom splash finished');
+    setCustomSplashFinished(true);
   };
 
-  if (!appIsReady || showCustomSplash) {
+  console.log('🏠 Layout render state:', {
+    loaded,
+    isLoading,
+    customSplashFinished,
+    hasSession: !!session,
+    userEmail: session?.user?.email
+  });
+
+  // Show splash until fonts are loaded, auth is checked, and custom splash is done
+  if (!loaded || isLoading || !customSplashFinished) {
+    console.log('🎬 Showing splash screen');
     return <CustomSplashScreen onAnimationFinish={onCustomSplashFinish} />;
   }
 
+  // Always render the same Stack structure, let the navigation effect handle routing
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack initialRouteName="welcome">
+      <Stack>
         <Stack.Screen name="welcome" options={{ headerShown: false }} />
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -79,5 +179,15 @@ export default function RootLayout() {
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
+  );
+}
+
+// Root Layout Component
+export default function RootLayout() {
+  console.log('🏠 RootLayout render');
+  return (
+    <AuthProvider>
+      <Layout />
+    </AuthProvider>
   );
 }
