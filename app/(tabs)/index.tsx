@@ -1,86 +1,370 @@
-import { BrandColors } from '@/constants/Colors';
+import ProfileView from '@/components/ProfileView';
 import { supabase } from '@/lib/supabase';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { useUserStore } from '@/store/useStore';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { useFocusEffect } from '@react-navigation/native';
 import { Audio, ResizeMode, Video } from 'expo-av';
-import { useCallback, useRef, useState } from 'react';
-import { Dimensions, FlatList, Pressable, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 
 const { width, height } = Dimensions.get('window');
 
 // Sample video shopping data
-const sampleVideos = [
+const DUMMY_VIDEOS = [
   {
     id: 1,
     username: '@fruitfulfinds',
-    product: 'Fresh Organic Apples',
     description: 'Sweet, juicy, and straight from the farm!',
-    price: '$2.99/lb',
     likes: '12.2k',
     comments: '1.5k',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     thumbnail: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=800&fit=crop',
-    avatar: 'https://images.unsplash.com/photo-1494790108755-2616b5bd25fe?w=50&h=50&fit=crop&crop=face'
+    avatar: 'https://images.unsplash.com/photo-1494790108755-2616b5bd25fe?w=50&h=50&fit=crop&crop=face',
+    products: [
+      {
+        id: 101,
+        title: 'Fresh Organic Apples',
+        price: '$2.99/lb',
+        originalPrice: '$3.99',
+        rating: '4.9 (540)',
+        image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=200&h=200&fit=crop'
+      }
+    ]
   },
   {
     id: 2,
     username: '@techdeals',
-    product: 'Wireless Headphones',
     description: 'Premium sound quality 🎧',
-    price: '$89.99',
     likes: '15.3k',
     comments: '2.1k',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
     thumbnail: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&h=800&fit=crop',
-    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop&crop=face'
-  },
-  {
-    id: 3,
-    username: '@fashionista',
-    product: 'Summer Fashion Collection',
-    description: 'Trendy styles for the season! ✨',
-    price: '$49.99',
-    likes: '8.7k',
-    comments: '892',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1515372039744-b8f02a3ae446?w=400&h=800&fit=crop',
-    avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=50&h=50&fit=crop&crop=face'
-  },
-  {
-    id: 4,
-    username: '@homeessentials',
-    product: 'Smart Home Gadgets',
-    description: 'Make your home smarter! 🏠',
-    price: '$129.99',
-    likes: '22.1k',
-    comments: '3.2k',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=800&fit=crop',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop&crop=face'
-  },
-  {
-    id: 5,
-    username: '@fitnessdeals',
-    product: 'Workout Equipment',
-    description: 'Get fit at home! 💪',
-    price: '$79.99',
-    likes: '18.5k',
-    comments: '2.8k',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400&h=800&fit=crop',
-    avatar: 'https://images.unsplash.com/photo-1566492031773-4f4e44671d66?w=50&h=50&fit=crop&crop=face'
+    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop&crop=face',
+    products: [
+      {
+        id: 201,
+        title: 'Wireless Headphones',
+        price: '$89.99',
+        originalPrice: '$129.99',
+        rating: '4.8 (2.3k)',
+        image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=200&h=200&fit=crop'
+      }
+    ]
   }
 ];
 
+const ProductCarousel = ({ products }: { products: any[] }) => {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      setActiveIndex(viewableItems[0].index ?? 0);
+    }
+  }).current;
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50,
+  }).current;
+
+  if (!products || products.length === 0) return null;
+
+  return (
+      <View style={styles.productCarouselContainer}>
+        <FlatList
+          data={products}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(product) => String(product.id)}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          renderItem={({ item: product }) => (
+            <View style={styles.productCardWrapper}>
+              <BlurView intensity={20} tint="dark" style={styles.productCard}>
+                <Image source={{ uri: product.image }} style={styles.productImagePlaceholder} resizeMode="cover" />
+                <View style={styles.productDetails}>
+                  <Text style={styles.cardProductTitle} numberOfLines={1}>{product.title}</Text>
+                  <View style={styles.priceRow}>
+                    <Text style={styles.cardPrice}>{product.price}</Text>
+                    {product.originalPrice && (
+                      <Text style={styles.cardOldPrice}>{product.originalPrice}</Text>
+                    )}
+                  </View>
+                  <View style={styles.ratingRow}>
+                    <Icon name="star" size={12} color="#FFD700" style={{ marginRight: 4 }} />
+                    <Text style={styles.ratingText}>{product.rating}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.viewButton}>
+                  <Text style={styles.viewButtonText}>View</Text>
+                </TouchableOpacity>
+              </BlurView>
+            </View>
+          )}
+        />
+        {(products.length > 0) && (
+          <View style={styles.paginationContainer}>
+             {products.map((_: any, dotIndex: number) => (
+                <View 
+                  key={dotIndex} 
+                  style={[
+                    styles.paginationDot, 
+                    dotIndex === activeIndex && styles.paginationDotActive
+                  ]} 
+                />
+             ))}
+          </View>
+        )}
+      </View>
+  );
+};
+
+const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio }: any) => {
+  const [progress, setProgress] = useState(0);
+  const isScrubbing = useRef(false);
+  const duration = useRef(0);
+  const localVideoRef = useRef<Video | null>(null);
+
+  // Memoize source to prevent unnecessary reloads
+  const videoSource = useMemo(() => ({ uri: item.videoUrl }), [item.videoUrl]);
+
+  const onPlaybackStatusUpdate = (status: any) => {
+    if (status.isLoaded) {
+      if (status.durationMillis) {
+        duration.current = status.durationMillis;
+        if (!isScrubbing.current) {
+          const p = status.positionMillis / status.durationMillis;
+          setProgress(p);
+        }
+      }
+    }
+  };
+
+  const handleSeek = (ratio: number) => {
+    const seekPosition = ratio * duration.current;
+    if (localVideoRef.current) {
+      localVideoRef.current.setPositionAsync(seekPosition);
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt: GestureResponderEvent) => {
+        isScrubbing.current = true;
+        const { locationX } = evt.nativeEvent;
+        // Now using full width for calculation
+        const ratio = Math.max(0, Math.min(1, locationX / width));
+        setProgress(ratio);
+      },
+      onPanResponderMove: (evt: GestureResponderEvent) => {
+        const { locationX } = evt.nativeEvent;
+        const ratio = Math.max(0, Math.min(1, locationX / width));
+        setProgress(ratio);
+      },
+      onPanResponderRelease: (evt: GestureResponderEvent) => {
+        const { locationX } = evt.nativeEvent;
+        const ratio = Math.max(0, Math.min(1, locationX / width));
+        handleSeek(ratio);
+        // Small delay before allowing playback updates to resume tracking
+        setTimeout(() => {
+          isScrubbing.current = false;
+        }, 200);
+      },
+      onPanResponderTerminate: () => {
+        isScrubbing.current = false;
+      },
+    })
+  ).current;
+
+  return (
+    <View style={styles.videoContainer}>
+      <Video
+        ref={(ref) => {
+          localVideoRef.current = ref;
+          videoRefs.current[index] = ref;
+        }}
+        source={videoSource}
+        style={styles.backgroundVideo}
+        resizeMode={ResizeMode.COVER}
+        isLooping
+        shouldPlay={index === currentIndex}
+        isMuted={muted}
+        onLoadStart={ensureAudio}
+        onPlaybackStatusUpdate={onPlaybackStatusUpdate}
+        progressUpdateIntervalMillis={100}
+        onError={(e) => console.log('Video error:', e)}
+      />
+
+      <Pressable
+        style={styles.videoTouchLayer}
+        onPress={() => setMuted((m: boolean) => !m)}
+        onLongPress={() => setMuted(false)}
+      >
+        {!muted && (
+           <View style={styles.muteBadge}>
+             <Icon name="volume-2" size={20} color="#fff" />
+           </View>
+        )}
+      </Pressable>
+
+      <View style={styles.gradientOverlay} />
+
+      <View style={styles.rightActions}>
+        <View style={styles.avatarContainer}>
+          <View style={styles.avatarWrapper}>
+            <Image 
+              source={{ uri: item.avatar || 'https://via.placeholder.com/50' }} 
+              style={styles.avatarImage} 
+            />
+          </View>
+          <View style={styles.plusBadge}>
+            <Icon name="plus" size={12} color="#fff" />
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.actionButton}>
+          <Icon name="video" size={28} color="#fff" />
+          <Text style={styles.actionLabel}>Call</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.actionButton}>
+          <Icon name="heart" size={28} color="#fff" />
+          <Text style={styles.actionCount}>{item.likes}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.actionButton}>
+          <Icon name="message-circle" size={28} color="#fff" />
+          <Text style={styles.actionCount}>{item.comments}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.actionButton}>
+          <Icon name="share-2" size={28} color="#fff" />
+          <Text style={styles.actionCount}>89</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.bottomInfoContainer}>
+        <View style={styles.userInfoContainer}>
+          <View style={styles.userRow}>
+             <Image 
+               source={{ uri: item.avatar || 'https://via.placeholder.com/32' }} 
+               style={styles.userAvatarSmall} 
+             />
+            <Text style={styles.username}>{item.username}</Text>
+            <Icon name="check-circle" size={14} color="#4A90E2" style={styles.verifiedBadge} />
+          </View>
+          <Text style={styles.description} numberOfLines={2}>
+            {item.description} <Text style={styles.hashtag}>#fashion #style</Text>
+          </Text>
+        </View>
+
+        <ProductCarousel products={item.products} />
+      </View>
+
+      {/* Scrubbing Progress Bar */}
+      <View 
+        style={styles.progressBarContainer}
+        {...panResponder.panHandlers}
+      >
+        <View style={[styles.progressBarActive, { width: `${progress * 100}%` }]} />
+      </View>
+    </View>
+  );
+};
+
 export default function HomeScreen() {
+  const { fetchProfile } = useUserStore();
   const [activeTab, setActiveTab] = useState('home');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [muted, setMuted] = useState(true);
+  const [videos, setVideos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const videoRefs = useRef<(Video | null)[]>([]);
 
-  // Ensure audio is in playback mode (only once)
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
+
+  const fetchVideos = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('videos')
+        .select(`
+          id,
+          video_url,
+          description,
+          created_at,
+          seller:profiles (
+            username,
+            full_name,
+            avatar_url
+          ),
+          video_products (
+            products (
+              id,
+              title,
+              price,
+              image_url
+            )
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const formattedVideos = data.map((v: any) => ({
+          id: v.id,
+          username: v.seller?.username ? `@${v.seller.username}` : (v.seller?.full_name || 'Unknown'),
+          description: v.description,
+          likes: '0', 
+          comments: '0', 
+          videoUrl: v.video_url,
+          avatar: v.seller?.avatar_url,
+          products: v.video_products.map((vp: any) => ({
+            id: vp.products.id,
+            title: vp.products.title,
+            price: `$${vp.products.price}`,
+            image: vp.products.image_url
+          }))
+        }));
+        setVideos(formattedVideos);
+      } else {
+        setVideos(DUMMY_VIDEOS);
+      }
+    } catch (error: any) {
+      console.error('Error fetching videos:', error);
+      setVideos(DUMMY_VIDEOS);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchVideos();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+        return () => {
+             videoRefs.current.forEach(ref => ref?.pauseAsync());
+        };
+    }, [])
+  );
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchVideos();
+  };
+
   const ensureAudio = useCallback(async () => {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
@@ -104,125 +388,54 @@ export default function HomeScreen() {
     itemVisiblePercentThreshold: 80,
   }).current;
 
-  const renderItem = ({ item, index }: { item: any; index: number }) => (
-    <View style={styles.videoContainer}>
-      <Video
-        ref={(ref) => { videoRefs.current[index] = ref; }}
-        source={{ uri: item.videoUrl }}
-        style={styles.backgroundVideo}
-        resizeMode={ResizeMode.COVER}
-        isLooping
-        shouldPlay={index === currentIndex}
-        isMuted={muted}
-        onLoadStart={ensureAudio}
-        onError={(e) => console.log('Video error:', e)}
-      />
+  const handleSignOut = async () => {
+    try {
+      try {
+        const isGoogleSignedIn = await GoogleSignin.isSignedIn();
+        if (isGoogleSignedIn) await GoogleSignin.signOut();
+      } catch (e) {}
+      await supabase.auth.signOut();
+    } catch (e: any) {
+      Alert.alert('Error', 'Failed to sign out');
+    }
+  };
 
-      {/* Tap layer (no higher zIndex than overlays) */}
-      <Pressable
-        style={styles.videoTouchLayer}
-        onPress={() => setMuted((m) => !m)}
-        onLongPress={() => setMuted(false)}
-      >
-        <View style={styles.muteBadge}>
-          <Icon
-            name={muted ? 'volume-x' : 'volume-2'}
-            size={18}
-            color="#fff"
-          />
-        </View>
-      </Pressable>
-
-      <View style={styles.gradientOverlay} />
-
-      <View style={styles.rightActions}>
-        <TouchableOpacity style={styles.actionButton}>
-          <Icon name="heart" size={28} color="#fff" />
-          <Text style={styles.actionCount}>{item.likes}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton}>
-          <Icon name="message-circle" size={28} color="#fff" />
-          <Text style={styles.actionCount}>{item.comments}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton}>
-          <Icon name="share" size={28} color="#fff" />
-          <Text style={styles.actionLabel}>Share</Text>
-        </TouchableOpacity>
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <View style={styles.headerTabs}>
+        <Text style={styles.headerTabInactive}>Following</Text>
+        <View style={styles.headerTabDivider} />
+        <Text style={styles.headerTabActive}>For You</Text>
       </View>
-
-      <View style={styles.productInfo}>
-        <Text style={styles.username}>{item.username}</Text>
-        <Text style={styles.productName}>{item.product}</Text>
-        <Text style={styles.productDescription}>{item.description}</Text>
-        <Text style={styles.productPrice}>{item.price}</Text>
-        <TouchableOpacity style={styles.buyButton}>
-          <Text style={styles.buyButtonText}>Buy Now</Text>
+      <View style={styles.headerRight}>
+        <TouchableOpacity style={styles.iconButton}>
+          <Icon name="search" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>
   );
 
-  const handleSignOut = async () => {
-    console.log('[SignOut] start');
-    try {
-      const hadPrev = await GoogleSignin.hasPreviousSignIn();
-      console.log('[SignOut] hasPreviousSignIn =', hadPrev);
-
-      try {
-        await GoogleSignin.signOut();
-        console.log('[SignOut] Google signOut OK');
-      } catch (gErr: any) {
-        console.log('[SignOut] Google signOut error code:', gErr?.code, 'msg:', gErr?.message);
-        if (gErr?.code === statusCodes.SIGN_IN_REQUIRED) {
-          console.log('[SignOut] No cached Google user – continuing.');
-        }
-      }
-
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.log('[SignOut] Supabase signOut error:', error.message);
-      } else {
-        console.log('[SignOut] Supabase signOut OK');
-      }
-
-      const sessionCheck = await supabase.auth.getSession();
-      console.log('[SignOut] Post signOut session:', sessionCheck.data.session);
-
-    } catch (e) {
-      console.log('[SignOut] Unexpected wrapper error:', e);
-    } 
-  };
-
-  const handleTabPress = (tabName: string) => {
-    setActiveTab(tabName);
-    if (tabName === 'profile') {
-      // handleSignOut();
-    }
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-
-      {/* Header */}
-      <View style={styles.header}>
-        {/* <TouchableOpacity style={styles.headerIcon}>
-          <Icon name="play" size={20} color="#fff" />
-        </TouchableOpacity> */}
-        <View style={styles.searchContainer}>
-          <Icon name="search" size={16} color="#fff" style={styles.searchIcon} />
-          <Text style={styles.searchText}>Search</Text>
-        </View>
-        {/* <TouchableOpacity style={styles.headerIcon}>
-          <Icon name="bell" size={20} color="#fff" />
-        </TouchableOpacity> */}
-      </View>
-
-      {/* Reels Feed */}
+      {activeTab === 'profile' ? null : renderHeader()}
+      {activeTab === 'profile' ? (
+        <ProfileView onSignOut={handleSignOut} />
+      ) : (
       <FlatList
-        data={sampleVideos}
+        data={videos}
         keyExtractor={(item) => String(item.id)}
-        renderItem={renderItem}
+        renderItem={({ item, index }) => (
+          <VideoItem 
+            item={item} 
+            index={index} 
+            currentIndex={currentIndex} 
+            muted={muted} 
+            setMuted={setMuted} 
+            videoRefs={videoRefs}
+            ensureAudio={ensureAudio}
+          />
+        )}
         pagingEnabled
         snapToAlignment="start"
         decelerationRate="fast"
@@ -233,39 +446,46 @@ export default function HomeScreen() {
         removeClippedSubviews
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
+        refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
+        }
+        ListEmptyComponent={
+            loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#fff" />
+                </View>
+            ) : null
+        }
         getItemLayout={(_, index) => ({
           length: height,
           offset: height * index,
           index,
         })}
       />
+      )}
 
-      {/* Modern Bottom Navigation */}
+      {/* Bottom Navigation */}
       <View style={styles.bottomNavContainer}>
         <View style={styles.bottomNav}>
-          {['home', 'favorites', 'cart', 'notifications', 'profile'].map((tab) => {
-            const iconMap: any = {
-              home: 'home',
-              favorites: 'heart',
-              cart: 'shopping-cart',
-              notifications: 'bell',
-              profile: 'user',
-            };
-            return (
-              <TouchableOpacity
-                key={tab}
-                style={[styles.navItem, activeTab === tab && styles.activeNavItem]}
-                onPress={() => setActiveTab(tab)}
-              >
-                <Icon
-                  name={iconMap[tab]}
-                  size={24}
-                  color={activeTab === tab ? '#ffffff' : '#333333'}
-                  style={styles.navIcon}
-                />
-              </TouchableOpacity>
-            );
-          })}
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('home')}>
+            <Icon name="home" size={24} color={activeTab === 'home' ? '#000' : '#666'} />
+            <Text style={[styles.navLabel, activeTab === 'home' && styles.navLabelActive]}>Home</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('discover')}>
+            <Icon name="compass" size={24} color={activeTab === 'discover' ? '#000' : '#666'} />
+             <Text style={[styles.navLabel, activeTab === 'discover' && styles.navLabelActive]}>Discover</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.createButton}>
+            <Icon name="plus" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('favorites')}>
+            <Icon name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#666'} />
+             <Text style={[styles.navLabel, activeTab === 'favorites' && styles.navLabelActive]}>Favorites</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('profile')}>
+            <Icon name="user" size={24} color={activeTab === 'profile' ? '#000' : '#666'} />
+             <Text style={[styles.navLabel, activeTab === 'profile' && styles.navLabelActive]}>Profile</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
@@ -278,62 +498,56 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
     position: 'absolute',
     top: 50,
     left: 0,
     right: 0,
     zIndex: 100,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
   },
-  headerIcon: {
-    padding: 8,
-  },
-  searchContainer: {
+  headerTabs: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
-    flex: 1,
-    marginHorizontal: 20,
   },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchText: {
+  headerTabInactive: {
     color: '#fff',
     fontSize: 16,
-    opacity: 0.8,
+    opacity: 0.7,
+    fontWeight: '600',
   },
-  videoFeed: {
-    flex: 1,
+  headerTabDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#fff',
+    opacity: 0.5,
+    marginHorizontal: 12,
+  },
+  headerTabActive: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  iconButton: {
+    padding: 4,
   },
   videoContainer: {
     width,
     height,
     position: 'relative',
-    overflow: 'hidden',
   },
   backgroundVideo: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width,
-    height,
-    zIndex: 0,
+    ...StyleSheet.absoluteFillObject,
   },
   videoTouchLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    // zIndex lower than overlays
+    ...StyleSheet.absoluteFillObject,
     zIndex: 1,
   },
   gradientOverlay: {
@@ -341,173 +555,263 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '45%',
+    height: '60%',
     zIndex: 2,
-    // Optional subtle fade:
-    // backgroundColor: 'rgba(0,0,0,0.25)'
+    backgroundColor: 'rgba(0,0,0,0.1)',
+  },
+  muteBadge: {
+    position: 'absolute',
+    top: 100,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 10,
+    borderRadius: 30,
   },
   rightActions: {
     position: 'absolute',
-    right: 15,
-    bottom: 200,
+    right: 12,
+    bottom: 220,
     alignItems: 'center',
-    zIndex: 3,
+    zIndex: 10,
   },
   actionButton: {
     alignItems: 'center',
-    marginBottom: 25,
+    marginBottom: 20,
+  },
+  actionLabel: {
+    color: '#fff',
+    fontSize: 10,
+    marginTop: 4,
+    fontWeight: '500',
   },
   actionCount: {
     color: '#fff',
     fontSize: 12,
+    marginTop: 4,
     fontWeight: '600',
-    marginTop: 5,
   },
-  actionLabel: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '500',
-    marginTop: 5,
+  avatarContainer: {
+    marginBottom: 24,
+    position: 'relative',
   },
-  cartButton: {
-    backgroundColor: '#FFD700',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 5,
+  avatarWrapper: {
+    padding: 1,
+    backgroundColor: '#fff',
+    borderRadius: 25,
   },
-  productInfo: {
+  avatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  userAvatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  plusBadge: {
     position: 'absolute',
-    bottom: 120,
-    left: 20,
-    right: 80,
-    zIndex: 3,
+    bottom: -8,
+    alignSelf: 'center',
+    backgroundColor: '#FFD700',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  bottomInfoContainer: {
+    position: 'absolute',
+    bottom: 110,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+  },
+  userInfoContainer: {
+    marginBottom: 16,
+    width: '80%',
+    paddingHorizontal: 16,
+  },
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   username: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 5,
+    marginRight: 6,
   },
-  productName: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
+  verifiedBadge: {
+    marginTop: 2,
   },
-  productDescription: {
+  description: {
     color: '#fff',
     fontSize: 14,
-    opacity: 0.9,
-    marginBottom: 8,
+    lineHeight: 20,
   },
-  productPrice: {
-    color: '#fff',
-    fontSize: 24,
+  hashtag: {
     fontWeight: 'bold',
-    marginBottom: 15,
   },
-  buyButton: {
-    backgroundColor: '#000',
-    paddingHorizontal: 30,
-    paddingVertical: 10,
-    borderRadius: 25,
-    alignSelf: 'flex-start',
+  productCarouselContainer: {
+    width: width,
   },
-  buyButtonText: {
+  productCardWrapper: {
+    width: width,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  productCard: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff1a',
+    borderRadius: 16,
+    padding: 10,
+    alignItems: 'center',
+    width: '100%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  productImagePlaceholder: {
+    width: 60,
+    height: 60,
+    backgroundColor: '#333',
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  productDetails: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  cardProductTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  cardPrice: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  
-  // Modern Bottom Navigation Styles
+  cardOldPrice: {
+    color: '#aaa',
+    fontSize: 13,
+    textDecorationLine: 'line-through',
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ratingText: {
+    color: '#ccc',
+    fontSize: 11,
+  },
+  viewButton: {
+    backgroundColor: '#fff',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginLeft: 8,
+  },
+  viewButtonText: {
+    color: '#000',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  paginationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  paginationDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginHorizontal: 3,
+  },
+  paginationDotActive: {
+    backgroundColor: '#fff',
+    width: 24,
+    height: 6,
+    borderRadius: 3,
+  },
   bottomNavContainer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#ffffff',
-    paddingBottom: 10, // Reduced from 20 to 10
-    paddingTop: 5, // Reduced from 10 to 5
+    backgroundColor: '#fff',
+    paddingBottom: 10,
+    paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#e5e5e5',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 10,
+    borderTopColor: '#f0f0f0',
   },
   bottomNav: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    paddingVertical: 3, // Reduced from 5 to 2
-  },
- navItem: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 7, // Make horizontal padding same as vertical for perfect circle
-    borderRadius: 25, // Increased border radius to make it circular
-    width: 40, // Set fixed width
-    height: 40, // Set fixed height to match width
   },
-  activeNavItem: {
-    backgroundColor: BrandColors.primary, // #F9CF35 (yellow/gold)
-  },
-  centerNavItem: {
+  navItem: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  navIcon: {
-    opacity: 0.7,
+  navLabel: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 4,
   },
-  centerButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  navLabelActive: {
+    color: '#000',
+    fontWeight: '600',
+  },
+  createButton: {
+    marginBottom: 8,
+    width: 45,
+    height: 30,
+    backgroundColor: '#000',
+    borderRadius: 8, 
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4A90E2',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#20D6E6',
+    borderRightWidth: 3,
+    borderRightColor: '#FF2E5B',
   },
-  playButtonOverlay: {
+  loadingContainer: {
+    height: height,
+    width: width,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressBarContainer: {
     position: 'absolute',
-    top: 0,
+    bottom: 97, // Cleanly above nav bar
     left: 0,
     right: 0,
-    bottom: 0,
+    height: 3, // Sleek touch area
+    backgroundColor: 'rgba(255, 255, 255, 0.2)', // Light color for remaining part
     justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
+    zIndex: 9999,
   },
-  playButton: {
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 40,
-    width: 80,
-    height: 80,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  muteBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    borderRadius: 12,
-    padding: 6,
-    zIndex: 2,
+  progressBarActive: {
+    height: 3, // Very sleek white line
+    backgroundColor: '#fff',
+    shadowColor: '#fff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 3,
   },
 });
