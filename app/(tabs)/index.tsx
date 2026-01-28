@@ -1,10 +1,14 @@
+import LiquidSearchBar from '@/components/LiquidSearchBar';
 import ProfileView from '@/components/ProfileView';
 import { supabase } from '@/lib/supabase';
 import { useUserStore } from '@/store/useStore';
+import { FontAwesome } from '@expo/vector-icons';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useFocusEffect } from '@react-navigation/native';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,8 +31,8 @@ const DUMMY_VIDEOS = [
       {
         id: 101,
         title: 'Fresh Organic Apples',
-        price: '$2.99/lb',
-        originalPrice: '$3.99',
+        price: '₹299/lb', // Converted roughly for context
+        originalPrice: '₹399',
         rating: '4.9 (540)',
         image: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=200&h=200&fit=crop'
       }
@@ -47,8 +51,8 @@ const DUMMY_VIDEOS = [
       {
         id: 201,
         title: 'Wireless Headphones',
-        price: '$89.99',
-        originalPrice: '$129.99',
+        price: '₹7,499',
+        originalPrice: '₹10,999',
         rating: '4.8 (2.3k)',
         image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=200&h=200&fit=crop'
       }
@@ -94,8 +98,9 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
                     )}
                   </View>
                   <View style={styles.ratingRow}>
-                    <Icon name="star" size={12} color="#FFD700" style={{ marginRight: 4 }} />
-                    <Text style={styles.ratingText}>{product.rating}</Text>
+                    <Text style={styles.ratingText}>{product.rating?.split(' ')[0]}</Text>
+                    <FontAwesome name="star" size={12} color="#FFD700" style={{ marginHorizontal: 4 }} />
+                    <Text style={[styles.ratingText, { opacity: 0.7 }]}>{product.rating?.split(' ').slice(1).join(' ')}</Text>
                   </View>
                 </View>
                 <TouchableOpacity style={styles.viewButton}>
@@ -212,20 +217,13 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
         )}
       </Pressable>
 
-      <View style={styles.gradientOverlay} />
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.8)']}
+        style={styles.gradientOverlay}
+      />
 
       <View style={styles.rightActions}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatarWrapper}>
-            <Image 
-              source={{ uri: item.avatar || 'https://via.placeholder.com/50' }} 
-              style={styles.avatarImage} 
-            />
-          </View>
-          <View style={styles.plusBadge}>
-            <Icon name="plus" size={12} color="#fff" />
-          </View>
-        </View>
+
 
         <TouchableOpacity style={styles.actionButton}>
           <Icon name="video" size={28} color="#fff" />
@@ -251,12 +249,17 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
       <View style={styles.bottomInfoContainer}>
         <View style={styles.userInfoContainer}>
           <View style={styles.userRow}>
-             <Image 
-               source={{ uri: item.avatar || 'https://via.placeholder.com/32' }} 
-               style={styles.userAvatarSmall} 
-             />
+            <Image source={{ uri: item.avatar || 'https://via.placeholder.com/50' }} style={styles.userAvatarSmall} />
             <Text style={styles.username}>{item.username}</Text>
-            <Icon name="check-circle" size={14} color="#4A90E2" style={styles.verifiedBadge} />
+            {/* New Follow Button */}
+            <TouchableOpacity style={styles.followButton}>
+               <Text style={styles.followButtonText}>Follow</Text>
+            </TouchableOpacity>
+            {item.isVerified && (
+              <View style={styles.verifiedBadge}>
+                <Icon name="check-circle" size={14} color="#20D6E6" />
+              </View>
+            )}
           </View>
           <Text style={styles.description} numberOfLines={2}>
             {item.description} <Text style={styles.hashtag}>#fashion #style</Text>
@@ -278,6 +281,7 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 };
 
 export default function HomeScreen() {
+  const router = useRouter();
   const { fetchProfile } = useUserStore();
   const [activeTab, setActiveTab] = useState('home');
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -331,7 +335,9 @@ export default function HomeScreen() {
           products: v.video_products.map((vp: any) => ({
             id: vp.products.id,
             title: vp.products.title,
-            price: `$${vp.products.price}`,
+            price: `₹${vp.products.price}`,
+            originalPrice: vp.products.original_price ? `₹${vp.products.original_price}` : undefined,
+            rating: '4.8 (1.2k)', // Default rating since not in DB
             image: vp.products.image_url
           }))
         }));
@@ -402,16 +408,7 @@ export default function HomeScreen() {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <View style={styles.headerTabs}>
-        <Text style={styles.headerTabInactive}>Following</Text>
-        <View style={styles.headerTabDivider} />
-        <Text style={styles.headerTabActive}>For You</Text>
-      </View>
-      <View style={styles.headerRight}>
-        <TouchableOpacity style={styles.iconButton}>
-          <Icon name="search" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
+      <LiquidSearchBar onPress={() => router.push('/search' as any)} />
     </View>
   );
 
@@ -468,23 +465,23 @@ export default function HomeScreen() {
       <View style={styles.bottomNavContainer}>
         <View style={styles.bottomNav}>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('home')}>
-            <Icon name="home" size={24} color={activeTab === 'home' ? '#000' : '#666'} />
-            <Text style={[styles.navLabel, activeTab === 'home' && styles.navLabelActive]}>Home</Text>
+            <Icon name="home" size={24} color={activeTab === 'home' ? '#000' : '#999'} />
+            <Text style={[styles.navLabel, activeTab === 'home' ? styles.navLabelActive : styles.navLabelInactive]}>Home</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('discover')}>
-            <Icon name="compass" size={24} color={activeTab === 'discover' ? '#000' : '#666'} />
-             <Text style={[styles.navLabel, activeTab === 'discover' && styles.navLabelActive]}>Discover</Text>
+            <Icon name="compass" size={24} color={activeTab === 'discover' ? '#000' : '#999'} />
+             <Text style={[styles.navLabel, activeTab === 'discover' ? styles.navLabelActive : styles.navLabelInactive]}>Discover</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.createButton}>
+          <TouchableOpacity style={styles.createButton} onPress={() => setActiveTab('create')}>
             <Icon name="plus" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('favorites')}>
-            <Icon name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#666'} />
-             <Text style={[styles.navLabel, activeTab === 'favorites' && styles.navLabelActive]}>Favorites</Text>
+            <Icon name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#999'} />
+             <Text style={[styles.navLabel, activeTab === 'favorites' ? styles.navLabelActive : styles.navLabelInactive]}>Favorites</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('profile')}>
-            <Icon name="user" size={24} color={activeTab === 'profile' ? '#000' : '#666'} />
-             <Text style={[styles.navLabel, activeTab === 'profile' && styles.navLabelActive]}>Profile</Text>
+            <Icon name="user" size={24} color={activeTab === 'profile' ? '#000' : '#999'} />
+             <Text style={[styles.navLabel, activeTab === 'profile' ? styles.navLabelActive : styles.navLabelInactive]}>Profile</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -555,9 +552,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '60%',
+    height: '50%',
     zIndex: 2,
-    backgroundColor: 'rgba(0,0,0,0.1)',
+    // backgroundColor removed in favor of LinearGradient
   },
   muteBadge: {
     position: 'absolute',
@@ -644,7 +641,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-    marginRight: 6,
+    marginRight: 8,
+  },
+  followButton: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.8)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.2)', // Slight contrast
+  },
+  followButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   verifiedBadge: {
     marginTop: 2,
@@ -667,14 +677,14 @@ const styles = StyleSheet.create({
   },
   productCard: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff1a',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 16,
     padding: 10,
     alignItems: 'center',
     width: '100%',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   productImagePlaceholder: {
     width: 60,
@@ -721,7 +731,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 20,
+    borderRadius: 12,
     marginLeft: 8,
   },
   viewButtonText: {
@@ -753,11 +763,16 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#fff',
+    backgroundColor: '#fff', 
     paddingBottom: 10,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   bottomNav: {
     flexDirection: 'row',
@@ -770,25 +785,28 @@ const styles = StyleSheet.create({
   },
   navLabel: {
     fontSize: 10,
-    color: '#666',
     marginTop: 4,
+  },
+  navLabelInactive: {
+    color: '#999',
   },
   navLabelActive: {
     color: '#000',
-    fontWeight: '600',
+    fontWeight: '800',
   },
   createButton: {
     marginBottom: 8,
-    width: 45,
-    height: 30,
+    width: 50,
+    height: 38,
     backgroundColor: '#000',
-    borderRadius: 8, 
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    borderLeftWidth: 3,
-    borderLeftColor: '#20D6E6',
-    borderRightWidth: 3,
-    borderRightColor: '#FF2E5B',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   loadingContainer: {
     height: height,

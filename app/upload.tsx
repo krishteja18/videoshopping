@@ -1,6 +1,5 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import { useUserStore } from '@/store/useStore';
-import { decode } from 'base64-arraybuffer';
 import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, router } from 'expo-router';
@@ -14,6 +13,10 @@ type Product = {
   imageUri: string;
   description: string;
 };
+
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_VIDEO_DURATION = 90; // 1.5 minutes
+
 
 export default function UploadScreen() {
   const { profile } = useUserStore();
@@ -33,8 +36,24 @@ export default function UploadScreen() {
       quality: 1,
     });
 
+
+
     if (!result.canceled) {
-      setVideo(result.assets[0]);
+      const asset = result.assets[0];
+      
+      // 1. Check Duration
+      if (asset.duration && asset.duration > MAX_VIDEO_DURATION * 1000) {
+        Alert.alert('Video too long', `Please select a video under ${MAX_VIDEO_DURATION} seconds.`);
+        return;
+      }
+
+      // 2. Check File Size (if available)
+      if (asset.fileSize && asset.fileSize > MAX_VIDEO_SIZE) {
+        Alert.alert('File too large', `Please select a video under ${MAX_VIDEO_SIZE / (1024 * 1024)}MB.`);
+        return;
+      }
+
+      setVideo(asset);
     }
   };
 
@@ -65,17 +84,28 @@ export default function UploadScreen() {
     const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
     const path = `${folder}/${Date.now()}.${ext}`;
     
-    // Read file as base64
-    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-    
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .upload(path, decode(base64), {
-        contentType: bucket === 'videos' ? 'video/mp4' : 'image/jpeg',
-        upsert: false
-      });
+    // Get session for authentication
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('No session found');
 
-    if (error) throw error;
+    // Use FileSystem.uploadAsync to stream the file directly to Supabase
+    // This bypasses the JS memory limit that crashes apps with large Base64 strings
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
+    
+    const response = await FileSystem.uploadAsync(uploadUrl, uri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': bucket === 'videos' ? 'video/mp4' : 'image/jpeg',
+      },
+    });
+
+    if (response.status !== 200) {
+      console.error('Upload failed:', response.body);
+      throw new Error('Failed to upload file');
+    }
     
     // Get public URL
     const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -279,175 +309,168 @@ export default function UploadScreen() {
   );
 }
 
+
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
-    padding: 16,
   },
   videoPlaceholder: {
-    height: 200,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    height: 300,
+    backgroundColor: '#111',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#333',
-    borderStyle: 'dashed',
+    marginBottom: 20,
   },
   videoSelected: {
-      width: '100%',
-      height: '100%',
+    width: '100%',
+    height: '100%',
   },
   videoPreview: {
-      width: '100%',
-      height: '100%',
+    width: '100%',
+    height: '100%',
   },
   changeOverlay: {
-      position: 'absolute',
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      padding: 8,
-      borderRadius: 20,
-      bottom: 8,
-      right: 8,
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 8,
+    borderRadius: 20,
   },
   placeholderText: {
     color: '#666',
-    marginTop: 8,
+    marginTop: 10,
   },
   captionInput: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#111',
     color: '#fff',
-    minHeight: 80,
+    padding: 15,
+    fontSize: 16,
+    minHeight: 100,
     textAlignVertical: 'top',
-    marginBottom: 24,
   },
   sectionTitle: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 12,
+    margin: 20,
+    marginBottom: 10,
+  },
+  productCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111',
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 10,
+  },
+  productThumb: {
+    width: 50,
+    height: 50,
+    borderRadius: 5,
+    marginRight: 10,
+  },
+  productTitle: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  productPrice: {
+    color: '#aaa',
+  },
+  formCard: {
+    backgroundColor: '#111',
+    margin: 20,
+    padding: 20,
+    borderRadius: 10,
+  },
+  formTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 15,
+  },
+  imagePicker: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#222',
+    borderRadius: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  imagePreview: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 5,
+  },
+  imagePlaceholder: {
+    alignItems: 'center',
+  },
+  input: {
+    backgroundColor: '#222',
+    color: '#fff',
+    padding: 12,
+    borderRadius: 5,
+    marginBottom: 10,
+  },
+  formActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 10,
+  },
+  cancelButton: {
+    padding: 10,
+    marginRight: 10,
+  },
+  cancelButtonText: {
+    color: '#888',
+  },
+  addButton: {
+    backgroundColor: '#fff',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 5,
+  },
+  addButtonText: {
+    color: '#000',
+    fontWeight: 'bold',
   },
   addProductBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    gap: 8,
-    marginBottom: 20,
+    margin: 20,
+    padding: 15,
+    borderRadius: 10,
   },
   addProductText: {
     color: '#000',
     fontWeight: 'bold',
+    marginLeft: 10,
   },
-  
-  // Product List
-  productCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8,
-    gap: 12,
-  },
-  productThumb: {
-    width: 50,
-    height: 50,
-    borderRadius: 4,
-    backgroundColor: '#333',
-  },
-  productTitle: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  productPrice: {
-    color: '#aaa',
-  },
-
-  // Form
-  formCard: {
-      backgroundColor: '#1a1a1a',
-      padding: 16,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: '#333',
-      marginBottom: 20,
-  },
-  formTitle: {
-      color: '#fff',
-      fontWeight: 'bold',
-      marginBottom: 12,
-  },
-  imagePicker: {
-      height: 100,
-      width: 100,
-      borderRadius: 8,
-      backgroundColor: '#2a2a2a',
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: 16,
-      overflow: 'hidden',
-  },
-  imagePreview: {
-      width: '100%',
-      height: '100%',
-  },
-  imagePlaceholder: {
-      alignItems: 'center',
-      gap: 4,
-  },
-  input: {
-      backgroundColor: '#2a2a2a',
-      borderRadius: 8,
-      padding: 10,
-      color: '#fff',
-      marginBottom: 12,
-  },
-  formActions: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-      gap: 12,
-      marginTop: 8,
-  },
-  cancelButton: {
-      padding: 10,
-  },
-  cancelButtonText: {
-      color: '#aaa',
-  },
-  addButton: {
-      backgroundColor: '#20D6E6',
-      paddingVertical: 10,
-      paddingHorizontal: 20,
-      borderRadius: 8,
-  },
-  addButtonText: {
-      color: '#000',
-      fontWeight: 'bold',
-  },
-
   footer: {
-      backgroundColor: '#000',
-      padding: 16,
-      borderTopWidth: 1,
-      borderTopColor: '#1a1a1a',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    borderTopWidth: 1,
+    borderTopColor: '#222',
   },
   submitButton: {
-      backgroundColor: '#FF2E5B',
-      padding: 16,
-      borderRadius: 12,
-      alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 30,
+    alignItems: 'center',
   },
   submitButtonText: {
-      color: '#fff',
-      fontSize: 16,
-      fontWeight: 'bold',
+    color: '#000',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 });

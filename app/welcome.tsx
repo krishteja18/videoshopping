@@ -132,14 +132,10 @@ const handleGoogleSignIn = async () => {
   setIsLoading(true);
   try {
     // Check if Google Play Services are available with better error handling
-    const playServicesAvailable = await GoogleSignin.hasPlayServices({
+    await GoogleSignin.hasPlayServices({
       showPlayServicesUpdateDialog: true,
     });
-    
-    if (!playServicesAvailable) {
-      throw new Error('Google Play Services not available');
-    }
-    
+
     // Show native Google account chooser dialog (like Zomato)
     const userInfo = await GoogleSignin.signIn();
     
