@@ -64,6 +64,58 @@ export interface Database {
           created_at?: string
         }
       }
+      categories: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          icon: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          slug: string
+          icon?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          icon?: string | null
+          created_at?: string
+        }
+      }
+      product_variants: {
+        Row: {
+          id: string
+          product_id: string
+          variant_options: Json
+          stock_quantity: number | null
+          price: number
+          image_url: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          product_id: string
+          variant_options: Json
+          stock_quantity?: number | null
+          price: number
+          image_url?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          product_id?: string
+          variant_options?: Json
+          stock_quantity?: number | null
+          price?: number
+          image_url?: string | null
+          created_at?: string
+        }
+      }
       products: {
         Row: {
           id: string
@@ -78,6 +130,9 @@ export interface Database {
           stock: number
           rating: number
           created_at: string
+          category_id: string | null
+          specifications: Json | null
+          has_variants: boolean | null
         }
         Insert: {
           id?: string
@@ -92,6 +147,9 @@ export interface Database {
           stock?: number
           rating?: number
           created_at?: string
+          category_id?: string | null
+          specifications?: Json | null
+          has_variants?: boolean | null
         }
         Update: {
           id?: string
@@ -106,6 +164,9 @@ export interface Database {
           stock?: number
           rating?: number
           created_at?: string
+          category_id?: string | null
+          specifications?: Json | null
+          has_variants?: boolean | null
         }
       }
       video_products: {

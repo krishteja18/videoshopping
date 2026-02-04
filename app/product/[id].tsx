@@ -30,7 +30,22 @@ export default function ProductDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [isLiked, setIsLiked] = useState(false);
+  const [selectedSize, setSelectedSize] = useState<string | null>('M');
+  const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+
+  // Mock Variants
+  const sizes = ['S', 'M', 'L', 'XL', 'XXL'];
+  const colors = [
+      { name: 'Black', code: '#000000' },
+      { name: 'White', code: '#FFFFFF' },
+      { name: 'Navy', code: '#000080' },
+      { name: 'Beige', code: '#F5F5DC' }
+  ];
+
+  useEffect(() => {
+      if (colors.length > 0) setSelectedColor(colors[0].name);
+  }, []);
   
   const mainImageRef = React.useRef<FlatList>(null);
 
@@ -38,6 +53,26 @@ export default function ProductDetailScreen() {
     setActiveImageIndex(index);
     mainImageRef.current?.scrollToOffset({ offset: index * width, animated: true });
   };
+
+  // Mock Data
+  const mockSpecs = [
+      { label: 'Material', value: '100% Premium Cotton' },
+      { label: 'Fit', value: 'Regular Fit' },
+      { label: 'Sleeve', value: 'Full Sleeve' },
+      { label: 'Wash Care', value: 'Machine Wash' },
+      { label: 'Origin', value: 'India' }
+  ];
+
+  const mockReviews = [
+      { id: 1, user: 'Rahul K.', rating: 5, comment: 'Amazing quality! Fits perfectly.', date: '2 days ago' },
+      { id: 2, user: 'Sneha P.', rating: 4, comment: 'Good fabric but slightly loose.', date: '1 week ago' }
+  ];
+
+  const mockSimilarProducts = [
+      { id: 101, title: 'Classic White Tee', price: 499, image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop' },
+      { id: 102, title: 'Denim Jacket', price: 1299, image: 'https://images.unsplash.com/photo-1523205771623-e0faa4d2813d?w=400&h=400&fit=crop' },
+      { id: 103, title: 'Chino Shorts', price: 799, image: 'https://images.unsplash.com/photo-1591195853828-11db59a44f6b?w=400&h=400&fit=crop' }
+  ];
 
   useEffect(() => {
     fetchProductDetails();
@@ -184,19 +219,56 @@ export default function ProductDetailScreen() {
               <Text style={styles.ratingCount}>4.8 (1.2k reviews)</Text>
           </View>
 
-          {/* Seller Info */}
-          <TouchableOpacity style={styles.sellerRow}>
-             <Image source={{ uri: product.seller?.avatar_url || 'https://via.placeholder.com/50' }} style={styles.sellerAvatar} />
-             <View style={styles.sellerInfo}>
-                 <Text style={styles.sellerName}>{product.seller?.full_name || product.seller?.username || 'Unknown Seller'}</Text>
-                 <Text style={styles.sellerRole}>Official Store</Text>
-             </View>
-             <TouchableOpacity style={styles.followButton}>
-                 <Text style={styles.followButtonText}>Visit Store</Text>
-             </TouchableOpacity>
-          </TouchableOpacity>
+
 
           <View style={styles.divider} />
+
+           {/* Color Selection */}
+           <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Color: {selectedColor}</Text>
+              <View style={styles.colorRow}>
+                  {colors.map((color) => (
+                      <TouchableOpacity 
+                        key={color.name}
+                        onPress={() => setSelectedColor(color.name)}
+                        style={[
+                            styles.colorOption,
+                            selectedColor === color.name && styles.colorOptionSelected,
+                            { backgroundColor: color.code }
+                        ]}
+                      >
+                          {selectedColor === color.name && color.name === 'White' && <View style={styles.colorCheckBlack} />}
+                      </TouchableOpacity>
+                  ))}
+              </View>
+           </View>
+
+           {/* Size Selection */}
+           <View style={styles.section}>
+              <View style={styles.sizeHeader}>
+                  <Text style={styles.sectionTitle}>Size</Text>
+                  <TouchableOpacity>
+                      <Text style={styles.sizeGuideText}>Size Guide</Text>
+                  </TouchableOpacity>
+              </View>
+              <View style={styles.sizeRow}>
+                  {sizes.map((size) => (
+                      <TouchableOpacity 
+                        key={size}
+                        onPress={() => setSelectedSize(size)}
+                        style={[
+                            styles.sizeOption,
+                            selectedSize === size && styles.sizeOptionSelected
+                        ]}
+                      >
+                          <Text style={[
+                              styles.sizeText,
+                              selectedSize === size && styles.sizeTextSelected
+                          ]}>{size}</Text>
+                      </TouchableOpacity>
+                  ))}
+              </View>
+           </View>
 
           {/* Description */}
           <View style={styles.section}>
@@ -216,6 +288,81 @@ export default function ProductDetailScreen() {
                   <Octicons name="shield-check" size={20} color="#666" />
                   <Text style={styles.infoText}>Original Product</Text>
               </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* Specifications */}
+          <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Specifications</Text>
+              <View style={styles.specsTable}>
+                  {mockSpecs.map((spec, index) => (
+                      <View key={index} style={[styles.specRow, index === mockSpecs.length - 1 && { borderBottomWidth: 0 }]}>
+                          <Text style={styles.specLabel}>{spec.label}</Text>
+                          <Text style={styles.specValue}>{spec.value}</Text>
+                      </View>
+                  ))}
+              </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* Reviews */}
+          <View style={styles.section}>
+              <View style={styles.reviewHeader}>
+                  <Text style={styles.sectionTitle}>Ratings & Reviews</Text>
+                  <TouchableOpacity>
+                      <Text style={styles.seeAllText}>See All</Text>
+                  </TouchableOpacity>
+              </View>
+              
+              {/* Rating Summary Block */}
+              <View style={styles.ratingSummary}>
+                  <View style={styles.bigRating}>
+                      <Text style={styles.bigRatingText}>4.8</Text>
+                      <Octicons name="star-fill" size={20} color="#FFD700" />
+                  </View>
+                  <Text style={styles.totalRatingsText}>1.2k Verified Buyers</Text>
+              </View>
+
+              {/* Recent Reviews */}
+              {mockReviews.map((review) => (
+                  <View key={review.id} style={styles.reviewItem}>
+                      <View style={styles.reviewTop}>
+                          <View style={styles.reviewerBadge}>
+                              <Text style={styles.reviewerName}>{review.user.charAt(0)}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                              <Text style={styles.reviewUser}>{review.user}</Text>
+                              <View style={styles.starRowSmall}>
+                                {[...Array(5)].map((_, i) => (
+                                    <Octicons key={i} name="star-fill" size={12} color={i < review.rating ? "#FFD700" : "#E0E0E0"} style={{ marginRight: 2 }} />
+                                ))}
+                              </View>
+                          </View>
+                          <Text style={styles.reviewDate}>{review.date}</Text>
+                      </View>
+                      <Text style={styles.reviewComment}>{review.comment}</Text>
+                  </View>
+              ))}
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* Similar Products */}
+          <View style={styles.section}>
+              <Text style={styles.sectionTitle}>You Might Also Like</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.similarList}>
+                  {mockSimilarProducts.map((item) => (
+                      <TouchableOpacity key={item.id} style={styles.similarItem} onPress={() => router.push(`/product/${item.id}`)}>
+                          <Image source={{ uri: item.image }} style={styles.similarImage} />
+                          <View style={styles.similarInfo}>
+                              <Text style={styles.similarTitle} numberOfLines={1}>{item.title}</Text>
+                              <Text style={styles.similarPrice}>₹{item.price}</Text>
+                          </View>
+                      </TouchableOpacity>
+                  ))}
+              </ScrollView>
           </View>
 
           <View style={{ height: 100 }} /> 
@@ -513,6 +660,213 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontFamily: 'Nunito-Medium',
+  },
+  colorRow: {
+    flexDirection: 'row',
+    gap: 15,
+    marginTop: 5,
+  },
+  colorOption: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#eee',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 2,
+  },
+  colorOptionSelected: {
+    borderColor: '#000',
+    borderWidth: 2,
+    transform: [{ scale: 1.1 }],
+  },
+  colorCheck: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: '#fff',
+  },
+  colorCheckBlack: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#000',
+},
+  sizeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 10,
+  },
+  sizeGuideText: {
+    color: '#666',
+    fontSize: 13,
+    textDecorationLine: 'underline',
+    fontFamily: 'Nunito-Medium',
+  },
+  sizeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  sizeOption: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  sizeOptionSelected: {
+    backgroundColor: '#000',
+    borderColor: '#000',
+  },
+  sizeText: {
+    fontSize: 14,
+    color: '#000',
+    fontFamily: 'Nunito-Medium',
+  },
+  sizeTextSelected: {
+    color: '#fff',
+    fontFamily: 'Nunito-SemiBold',
+  },
+  specsTable: {
+      borderWidth: 1,
+      borderColor: '#f0f0f0',
+      borderRadius: 8,
+      overflow: 'hidden',
+  },
+  specRow: {
+      flexDirection: 'row',
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f0f0f0',
+  },
+  specLabel: {
+      flex: 1,
+      color: '#666',
+      fontFamily: 'Nunito-Regular',
+      fontSize: 14,
+  },
+  specValue: {
+      flex: 1,
+      color: '#000',
+      fontFamily: 'Nunito-Medium',
+      fontSize: 14,
+  },
+  reviewHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      marginBottom: 15,
+  },
+  seeAllText: {
+      color: '#007AFF',
+      fontSize: 14,
+      fontFamily: 'Nunito-Medium',
+  },
+  ratingSummary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 20,
+      backgroundColor: '#f9f9f9',
+      padding: 15,
+      borderRadius: 12,
+  },
+  bigRating: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      marginRight: 15,
+  },
+  bigRatingText: {
+      fontSize: 32,
+      fontFamily: 'Nunito-Bold',
+      color: '#333',
+  },
+  totalRatingsText: {
+      color: '#666',
+      fontSize: 14,
+      fontFamily: 'Nunito-Regular',
+  },
+  reviewItem: {
+      marginBottom: 15,
+      paddingBottom: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f0f0f0',
+  },
+  reviewTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+  },
+  reviewerBadge: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#f0f0f0',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 10,
+  },
+  reviewerName: { // Initial
+      fontSize: 14,
+      fontFamily: 'Nunito-Bold',
+      color: '#555',
+  },
+  reviewUser: {
+      fontSize: 14,
+      fontFamily: 'Nunito-SemiBold',
+      color: '#000',
+      marginBottom: 2,
+  },
+  starRowSmall: {
+      flexDirection: 'row',
+  },
+  reviewDate: {
+      fontSize: 12,
+      color: '#999',
+  },
+  reviewComment: {
+      fontSize: 14,
+      color: '#444',
+      lineHeight: 20,
+      fontFamily: 'Nunito-Regular',
+  },
+  similarList: {
+      gap: 15,
+      paddingRight: 20,
+  },
+  similarItem: {
+      width: 140,
+      marginRight: 15,
+  },
+  similarImage: {
+      width: 140,
+      height: 180,
+      borderRadius: 12,
+      marginBottom: 8,
+      backgroundColor: '#f0f0f0',
+  },
+  similarInfo: {
+      paddingHorizontal: 4,
+  },
+  similarTitle: {
+      fontSize: 14,
+      fontFamily: 'Nunito-Medium',
+      color: '#000',
+      marginBottom: 4,
+  },
+  similarPrice: {
+      fontSize: 14,
+      fontFamily: 'Nunito-Bold',
+      color: '#000',
   },
   paginationContainer: {
       position: 'absolute',

@@ -13,9 +13,39 @@ type Product = {
   imageUris: string[];
   description: string;
   category: string;
+  specifications?: Record<string, any>;
+  hasVariants?: boolean;
+  variants?: { name: string; options: string[] }[]; // e.g. [{name: 'Color', options: ['Red', 'Blue']}]
+  generatedVariants?: { id: string; name: string; price: string; stock: string; options?: any }[];
 };
 
-const CATEGORIES = ['Fashion', 'Tech', 'Beauty', 'Decor', 'Other'];
+// Configuration for Dynamic Fields
+const CATEGORY_CONFIG: Record<string, { label: string; key: string; type: 'text' | 'select'; options?: string[] }[]> = {
+  'fashion': [
+    { label: 'Material', key: 'material', type: 'text' },
+    { label: 'Fit', key: 'fit', type: 'select', options: ['Slim', 'Regular', 'Oversized', 'Skinny'] },
+    { label: 'Pattern', key: 'pattern', type: 'text' },
+    { label: 'Care Instructions', key: 'care_instructions', type: 'text' }
+  ],
+  'electronics': [
+    { label: 'Warranty (Months)', key: 'warranty', type: 'text' },
+    { label: 'Screen Size', key: 'screen_size', type: 'text' },
+    { label: 'Storage', key: 'storage', type: 'select', options: ['64GB', '128GB', '256GB', '512GB', '1TB'] },
+    { label: 'Battery Capacity', key: 'battery', type: 'text' }
+  ],
+  'home-living': [
+    { label: 'Dimensions (LxWxH)', key: 'dimensions', type: 'text' },
+    { label: 'Weight (kg)', key: 'weight', type: 'text' },
+    { label: 'Material', key: 'material', type: 'text' }
+  ],
+  'beauty': [
+    { label: 'Volume', key: 'volume', type: 'select', options: ['50ml', '100ml', '200ml', '500ml'] },
+    { label: 'Skin Type', key: 'skin_type', type: 'select', options: ['All', 'Dry', 'Oily', 'Sensitive'] },
+    { label: 'Ingredients', key: 'ingredients', type: 'text' }
+  ]
+};
+
+const CATEGORIES: any[] = []; // Will fetch from DB
 
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_VIDEO_DURATION = 90; // 1.5 minutes
@@ -27,10 +57,22 @@ export default function UploadScreen() {
   const [video, setVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [caption, setCaption] = useState('');
   
-  // Product Form State
   const [products, setProducts] = useState<Product[]>([]);
   const [showProductForm, setShowProductForm] = useState(false);
-  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUris: [], description: '', category: '' });
+  const [step, setStep] = useState<1 | 2 | 3>(1); // 1: Category, 2: Details, 3: Variants
+  const [categories, setCategories] = useState<any[]>([]);
+  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [] });
+  const [newVariantName, setNewVariantName] = useState('');
+  const [newVariantValues, setNewVariantValues] = useState('');
+
+  React.useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  const fetchCategories = async () => {
+    const { data } = await supabase.from('categories').select('*').order('name');
+    if (data) setCategories(data);
+  };
 
   const pickVideo = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -79,8 +121,70 @@ export default function UploadScreen() {
       return;
     }
     setProducts([...products, tempProduct]);
-    setTempProduct({ title: '', price: '', imageUris: [], description: '', category: '' });
+    setTempProduct({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [] });
     setShowProductForm(false);
+    setStep(1); // Reset step
+  };
+
+  const handleNext = () => {
+      // Check if category needs variants (hardcoded for Fashion now, or check slug)
+      if (tempProduct.category === 'fashion') {
+          setStep(3);
+      } else {
+          addProduct();
+      }
+  };
+
+  const addVariantOption = () => {
+      if (!newVariantName || !newVariantValues) return;
+      const options = newVariantValues.split(',').map(s => s.trim()).filter(Boolean);
+      
+      const newGroup = { name: newVariantName, options };
+      const updatedVariants = [...(tempProduct.variants || []), newGroup];
+
+      // Recursively generate Cartesian product
+      const generateCartesian = (groups: { name: string; options: string[] }[]) => {
+          if (groups.length === 0) return [];
+          
+          let results: { name: string; options: any }[] = groups[0].options.map(opt => ({ 
+              name: opt, 
+              options: { [groups[0].name]: opt } 
+          }));
+
+          for (let i = 1; i < groups.length; i++) {
+              const nextGroup = groups[i];
+              const newResults: { name: string; options: any }[] = [];
+              
+              for (const res of results) {
+                  for (const opt of nextGroup.options) {
+                      newResults.push({
+                          name: `${res.name} / ${opt}`,
+                          options: { ...res.options, [nextGroup.name]: opt }
+                      });
+                  }
+              }
+              results = newResults;
+          }
+          return results;
+      };
+
+      const combinations = generateCartesian(updatedVariants);
+      
+      const generated = combinations.map(c => ({
+          id: Math.random().toString(),
+          name: c.name,
+          price: tempProduct.price,
+          stock: '10',
+          options: c.options
+      }));
+
+      setTempProduct({
+          ...tempProduct,
+          variants: updatedVariants,
+          generatedVariants: generated
+      });
+      setNewVariantName('');
+      setNewVariantValues('');
   };
 
   const uploadFile = async (uri: string, bucket: string, folder: string) => {
@@ -170,11 +274,30 @@ export default function UploadScreen() {
             image_url: mainImageUrl, // Keep backward compatibility
             images: uploadedImageUrls,
             category: prod.category,
+            specifications: prod.specifications || {}, // Save the dynamic specs
           })
           .select()
           .single();
 
         if (productError) throw productError;
+
+        // 4. Insert Variants (if any)
+        if (prod.generatedVariants && prod.generatedVariants.length > 0) {
+            const variantsToInsert = prod.generatedVariants.map(v => ({
+                product_id: productData.id,
+                variant_name: v.name,
+                price: parseFloat(v.price) || parseFloat(prod.price),
+                stock_quantity: parseInt(v.stock) || 0,
+                sku: `${productData.id}-${v.name.replace(/[^a-zA-Z0-9]/g, '-')}`, // sanitized SKU
+                options: v.options // Use the options object generated by cartesian
+            }));
+
+            const { error: variantError } = await supabase
+                .from('product_variants')
+                .insert(variantsToInsert);
+            
+            if (variantError) throw variantError;
+        }
 
         // Link Video <-> Product
         const { error: linkError } = await supabase
@@ -244,92 +367,230 @@ export default function UploadScreen() {
           </View>
         ))}
 
-        {/* Add Product Form */}
-        {showProductForm ? (
-          <View style={styles.formCard}>
-            <Text style={styles.formTitle}>New Product</Text>
-            
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
-              <TouchableOpacity style={styles.imagePicker} onPress={pickProductImage}>
-                  <Icon name="camera" size={24} color="#666" />
-                  <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
-              </TouchableOpacity>
+          {/* Add Product Form */}
+          {showProductForm ? (
+            <View style={styles.formCard}>
+              <View style={styles.formHeader}>
+                 <Text style={styles.formTitle}>{step === 1 ? 'Select Category' : 'Product Details'}</Text>
+                 {step === 2 && (
+                     <TouchableOpacity onPress={() => setStep(1)}>
+                         <Text style={{  color: '#888', marginRight: 10 }}>Change</Text>
+                     </TouchableOpacity>
+                 )}
+                 {step === 3 && (
+                     <TouchableOpacity onPress={() => setStep(2)}>
+                         <Text style={{  color: '#888', marginRight: 10 }}>Back</Text>
+                     </TouchableOpacity>
+                 )}
+              </View>
               
-              {tempProduct.imageUris.map((uri, idx) => (
-                 <View key={idx} style={styles.imagePreviewContainer}>
-                    <Image source={{ uri }} style={styles.imagePreview} />
-                    <TouchableOpacity 
-                        style={styles.removeImageBtn}
-                        onPress={() => setTempProduct({
-                            ...tempProduct, 
-                            imageUris: tempProduct.imageUris.filter((_, i) => i !== idx)
-                        })}
-                    >
-                        <Icon name="x" size={12} color="#fff" />
-                    </TouchableOpacity>
-                 </View>
-              ))}
-            </ScrollView>
+              {step === 1 ? (
+                  /* Step 1: Category Selection */
+                  <View style={styles.categoryGrid}>
+                      {categories.map((cat) => (
+                          <TouchableOpacity 
+                            key={cat.id} 
+                            style={styles.categoryCard}
+                            onPress={() => {
+                                setTempProduct({ ...tempProduct, category: cat.slug }); // Store slug
+                                setStep(2);
+                            }}
+                          >
+                              <View style={styles.categoryIconCircle}>
+                                  <Icon name={cat.icon || 'box'} size={24} color="#000" />
+                              </View>
+                              <Text style={styles.categoryCardText}>{cat.name}</Text>
+                          </TouchableOpacity>
+                      ))}
+                  </View>
+              ) : step === 2 ? (
+                  /* Step 2: Basic Details */
+                  <>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
+                      <TouchableOpacity style={styles.imagePicker} onPress={pickProductImage}>
+                          <Icon name="camera" size={24} color="#666" />
+                          <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
+                      </TouchableOpacity>
+                      
+                      {tempProduct.imageUris.map((uri, idx) => (
+                        <View key={idx} style={styles.imagePreviewContainer}>
+                            <Image source={{ uri }} style={styles.imagePreview} />
+                            <TouchableOpacity 
+                                style={styles.removeImageBtn}
+                                onPress={() => setTempProduct({
+                                    ...tempProduct, 
+                                    imageUris: tempProduct.imageUris.filter((_, i) => i !== idx)
+                                })}
+                            >
+                                <Icon name="x" size={12} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Product Title"
-              placeholderTextColor="#666"
-              value={tempProduct.title}
-              onChangeText={t => setTempProduct({...tempProduct, title: t})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Price ($)"
-              placeholderTextColor="#666"
-              keyboardType="numeric"
-              value={tempProduct.price}
-              onChangeText={t => setTempProduct({...tempProduct, price: t})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Description (Optional)"
-              placeholderTextColor="#666"
-              value={tempProduct.description}
-              onChangeText={t => setTempProduct({...tempProduct, description: t})}
-            />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Product Title"
+                      placeholderTextColor="#666"
+                      value={tempProduct.title}
+                      onChangeText={t => setTempProduct({...tempProduct, title: t})}
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Price (₹)"
+                      placeholderTextColor="#666"
+                      keyboardType="numeric"
+                      value={tempProduct.price}
+                      onChangeText={t => setTempProduct({...tempProduct, price: t})}
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Description (Optional)"
+                      placeholderTextColor="#666"
+                      value={tempProduct.description}
+                      onChangeText={t => setTempProduct({...tempProduct, description: t})}
+                    />
 
-            <Text style={styles.label}>Category</Text>
-            <View style={styles.categoryContainer}>
-              {CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.categoryChip,
-                    tempProduct.category === cat && styles.categoryChipSelected
-                  ]}
-                  onPress={() => setTempProduct({ ...tempProduct, category: cat })}
-                >
-                  <Text style={[
-                      styles.categoryChipText,
-                      tempProduct.category === cat && styles.categoryChipTextSelected
-                  ]}>
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    {/* Show Selected Category */}
+                    <View style={styles.selectedCategoryChip}>
+                        <Text style={{ color: '#888', fontSize: 12 }}>Category: </Text>
+                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{categories.find(c => c.slug === tempProduct.category)?.name}</Text>
+                    </View>
+
+                    {/* Dynamic Attributes Form */}
+                    {CATEGORY_CONFIG[tempProduct.category]?.length > 0 && (
+                        <View style={styles.dynamicFormSection}>
+                            <Text style={styles.sectionHeader}>Product Attributes</Text>
+                            {CATEGORY_CONFIG[tempProduct.category].map((field) => (
+                                <View key={field.key} style={{ marginBottom: 10 }}>
+                                    <Text style={styles.fieldLabel}>{field.label}</Text>
+                                    {field.type === 'select' ? (
+                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                                            {field.options?.map(opt => (
+                                                <TouchableOpacity
+                                                    key={opt}
+                                                    onPress={() => setTempProduct(prev => ({
+                                                        ...prev,
+                                                        specifications: { ...prev.specifications, [field.key]: opt }
+                                                    }))}
+                                                    style={[
+                                                        styles.optionChip,
+                                                        tempProduct.specifications?.[field.key] === opt && styles.optionChipSelected
+                                                    ]}
+                                                >
+                                                    <Text style={[
+                                                        styles.optionChipText,
+                                                        tempProduct.specifications?.[field.key] === opt && styles.optionChipTextSelected
+                                                    ]}>{opt}</Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </ScrollView>
+                                    ) : (
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder={field.label}
+                                            placeholderTextColor="#666"
+                                            value={tempProduct.specifications?.[field.key] || ''}
+                                            onChangeText={(text) => setTempProduct(prev => ({
+                                                ...prev,
+                                                specifications: { ...prev.specifications, [field.key]: text }
+                                            }))}
+                                        />
+                                    )}
+                                </View>
+                            ))}
+                        </View>
+                    )}
+
+                    <View style={styles.formActions}>
+                      <TouchableOpacity style={styles.cancelButton} onPress={() => setShowProductForm(false)}>
+                        <Text style={styles.cancelButtonText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.addButton} onPress={handleNext}>
+                        <Text style={styles.addButtonText}>{tempProduct.category === 'fashion' ? 'Next (Variants)' : 'Add Product'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+              ) : (
+                  /* Step 3: Variants (Fashion Only) */
+                  <View>
+                      <Text style={styles.fieldLabel}>Add Variations (e.g. Size, Color)</Text>
+                      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                          <TextInput 
+                              style={[styles.input, { flex: 1, marginBottom: 0 }]} 
+                              placeholder="Name (e.g. Size)" 
+                              placeholderTextColor="#666"
+                              value={newVariantName}
+                              onChangeText={setNewVariantName}
+                          />
+                          <TextInput 
+                              style={[styles.input, { flex: 2, marginBottom: 0 }]} 
+                              placeholder="Values (S, M, L)" 
+                              placeholderTextColor="#666"
+                              value={newVariantValues}
+                              onChangeText={setNewVariantValues}
+                          />
+                      </View>
+                      <TouchableOpacity style={styles.secondaryBtn} onPress={addVariantOption}>
+                          <Text style={styles.secondaryBtnText}>+ Add Option Group</Text>
+                      </TouchableOpacity>
+
+                      {/* List of Added Groups */}
+                      <View style={{ marginBottom: 15 }}>
+                          {tempProduct.variants?.map((v, i) => (
+                              <View key={i} style={styles.addedGroupChip}>
+                                  <Text style={styles.addedGroupText}>
+                                      <Text style={{ fontWeight: 'bold' }}>{v.name}: </Text> 
+                                      {v.options.join(', ')}
+                                  </Text>
+                              </View>
+                          ))}
+                      </View>
+
+                      <ScrollView style={{ maxHeight: 200, marginTop: 15 }}>
+                          {tempProduct.generatedVariants?.map((v, i) => (
+                              <View key={i} style={styles.variantRow}>
+                                  <Text style={styles.variantName}>{v.name}</Text>
+                                  <TextInput 
+                                    style={styles.variantInput} 
+                                    value={v.price} 
+                                    placeholder="Price"
+                                    placeholderTextColor="#555"
+                                    onChangeText={(tx) => {
+                                        const updated = [...(tempProduct.generatedVariants || [])];
+                                        updated[i].price = tx;
+                                        setTempProduct({...tempProduct, generatedVariants: updated});
+                                    }}
+                                  />
+                                  <TextInput 
+                                    style={styles.variantInput} 
+                                    value={v.stock} 
+                                    placeholder="Stock"
+                                    placeholderTextColor="#555"
+                                    onChangeText={(tx) => {
+                                        const updated = [...(tempProduct.generatedVariants || [])];
+                                        updated[i].stock = tx;
+                                        setTempProduct({...tempProduct, generatedVariants: updated});
+                                    }}
+                                  />
+                              </View>
+                          ))}
+                      </ScrollView>
+
+                      <View style={styles.formActions}>
+                        <TouchableOpacity style={styles.addButton} onPress={addProduct}>
+                            <Text style={styles.addButtonText}>Finish & Add</Text>
+                        </TouchableOpacity>
+                      </View>
+                  </View>
+              )}
             </View>
-
-            <View style={styles.formActions}>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => setShowProductForm(false)}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.addButton} onPress={addProduct}>
-                <Text style={styles.addButtonText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          <TouchableOpacity style={styles.addProductBtn} onPress={() => setShowProductForm(true)}>
-            <Icon name="plus" size={20} color="#000" />
-            <Text style={styles.addProductText}>Add Product</Text>
-          </TouchableOpacity>
-        )}
+          ) : (
+            <TouchableOpacity style={styles.addProductBtn} onPress={() => { setShowProductForm(true); setStep(1); }}>
+              <Icon name="plus" size={20} color="#000" />
+              <Text style={styles.addProductText}>Add Product</Text>
+            </TouchableOpacity>
+          )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
@@ -564,5 +825,138 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
+  },
+  categoryGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 15,
+      justifyContent: 'space-between',
+  },
+  categoryCard: {
+      width: '47%',
+      backgroundColor: '#222',
+      borderRadius: 12,
+      padding: 15,
+      alignItems: 'center',
+      marginBottom: 0,
+      borderWidth: 1,
+      borderColor: '#333',
+  },
+  categoryIconCircle: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: '#fff',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 10,
+  },
+  categoryCardText: {
+      color: '#fff',
+      fontSize: 14,
+      fontWeight: '600',
+  },
+  formHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 20,
+  },
+  selectedCategoryChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#222',
+      padding: 10,
+      borderRadius: 8,
+      marginBottom: 15,
+      borderWidth: 1,
+      borderColor: '#444',
+  },
+  dynamicFormSection: {
+      marginTop: 10,
+      marginBottom: 20,
+      padding: 10,
+      backgroundColor: '#1a1a1a',
+      borderRadius: 8,
+  },
+  sectionHeader: {
+      color: '#fff',
+      fontSize: 14,
+      fontWeight: 'bold',
+      marginBottom: 10,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+  },
+  fieldLabel: {
+      color: '#bbb',
+      marginBottom: 5,
+      fontSize: 12,
+  },
+  optionChip: {
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      backgroundColor: '#333',
+      borderRadius: 15,
+      marginRight: 8,
+      borderWidth: 1,
+      borderColor: 'transparent',
+  },
+  optionChipSelected: {
+      backgroundColor: '#fff',
+      borderColor: '#fff',
+  },
+  optionChipText: {
+      color: '#bbb',
+      fontSize: 12,
+  },
+  optionChipTextSelected: {
+      fontWeight: 'bold',
+  },
+  addedGroupChip: {
+      backgroundColor: '#222',
+      padding: 8,
+      borderRadius: 5,
+      marginBottom: 5,
+      borderLeftWidth: 3,
+      borderLeftColor: '#fff',
+  },
+  addedGroupText: {
+      color: '#aaa',
+      fontSize: 12,
+  },
+  secondaryBtn: {
+      padding: 10,
+      backgroundColor: '#333',
+      borderRadius: 5,
+      alignItems: 'center',
+      marginBottom: 10,
+  },
+  secondaryBtnText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: 'bold',
+  },
+  variantRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: '#222',
+  },
+  variantName: {
+      color: '#ddd',
+      flex: 2,
+      fontSize: 14,
+  },
+  variantInput: {
+      backgroundColor: '#111',
+      color: '#fff',
+      padding: 5,
+      width: 60,
+      borderRadius: 4,
+      textAlign: 'center',
+      marginLeft: 5,
+      fontSize: 12,
   },
 });
