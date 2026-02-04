@@ -92,3 +92,27 @@ export const useUserStore = create<UserState>((set, get) => ({
     }
   }
 }));
+
+// Search State Store
+interface SearchState {
+  query: string;
+  viewMode: 'discovery' | 'suggestions' | 'results';
+  filteredVideos: any[];
+  
+  // Actions
+  setQuery: (query: string) => void;
+  setViewMode: (mode: 'discovery' | 'suggestions' | 'results') => void;
+  setFilteredVideos: (videos: any[]) => void;
+  clearSearch: () => void;
+}
+
+export const useSearchStore = create<SearchState>((set) => ({
+  query: '',
+  viewMode: 'discovery',
+  filteredVideos: [],
+  
+  setQuery: (query) => set({ query }),
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setFilteredVideos: (videos) => set({ filteredVideos: videos }),
+  clearSearch: () => set({ query: '', viewMode: 'discovery', filteredVideos: [] })
+}));

@@ -10,9 +10,12 @@ import Icon from 'react-native-vector-icons/Feather';
 type Product = {
   title: string;
   price: string;
-  imageUri: string;
+  imageUris: string[];
   description: string;
+  category: string;
 };
+
+const CATEGORIES = ['Fashion', 'Tech', 'Beauty', 'Decor', 'Other'];
 
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_VIDEO_DURATION = 90; // 1.5 minutes
@@ -27,7 +30,7 @@ export default function UploadScreen() {
   // Product Form State
   const [products, setProducts] = useState<Product[]>([]);
   const [showProductForm, setShowProductForm] = useState(false);
-  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUri: '', description: '' });
+  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUris: [], description: '', category: '' });
 
   const pickVideo = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -60,23 +63,23 @@ export default function UploadScreen() {
   const pickProductImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
+      allowsEditing: true, // You might want to disable this if selecting multiple at once is desired, but expo-image-picker single selection with editing is standard. To allow multiple, we need 'allowsMultipleSelection: true' (if supported) or just call this contentiously.
       aspect: [1, 1],
       quality: 0.8,
     });
 
     if (!result.canceled) {
-      setTempProduct({ ...tempProduct, imageUri: result.assets[0].uri });
+      setTempProduct({ ...tempProduct, imageUris: [...tempProduct.imageUris, result.assets[0].uri] });
     }
   };
 
   const addProduct = () => {
-    if (!tempProduct.title || !tempProduct.price || !tempProduct.imageUri) {
-      Alert.alert('Error', 'Please fill all product fields and select an image');
+    if (!tempProduct.title || !tempProduct.price || tempProduct.imageUris.length === 0 || !tempProduct.category) {
+      Alert.alert('Error', 'Please fill all fields, select at least one image, and choose a category');
       return;
     }
     setProducts([...products, tempProduct]);
-    setTempProduct({ title: '', price: '', imageUri: '', description: '' });
+    setTempProduct({ title: '', price: '', imageUris: [], description: '', category: '' });
     setShowProductForm(false);
   };
 
@@ -147,8 +150,14 @@ export default function UploadScreen() {
 
       // 3. Process Products
       for (const prod of products) {
-        // Upload image
-        const imageUrl = await uploadFile(prod.imageUri, 'product-images', profile.id);
+        // Upload all images
+        const uploadedImageUrls = [];
+        for (const uri of prod.imageUris) {
+            const iUrl = await uploadFile(uri, 'product-images', profile.id);
+            uploadedImageUrls.push(iUrl);
+        }
+        
+        const mainImageUrl = uploadedImageUrls[0];
         
         // Create Product
         const { data: productData, error: productError } = await supabase
@@ -158,7 +167,9 @@ export default function UploadScreen() {
             title: prod.title,
             price: parseFloat(prod.price),
             description: prod.description,
-            image_url: imageUrl,
+            image_url: mainImageUrl, // Keep backward compatibility
+            images: uploadedImageUrls,
+            category: prod.category,
           })
           .select()
           .single();
@@ -222,7 +233,7 @@ export default function UploadScreen() {
         
         {products.map((p, i) => (
           <View key={i} style={styles.productCard}>
-            <Image source={{ uri: p.imageUri }} style={styles.productThumb} />
+            <Image source={{ uri: p.imageUris[0] }} style={styles.productThumb} />
             <View style={{ flex: 1 }}>
               <Text style={styles.productTitle}>{p.title}</Text>
               <Text style={styles.productPrice}>${p.price}</Text>
@@ -238,16 +249,27 @@ export default function UploadScreen() {
           <View style={styles.formCard}>
             <Text style={styles.formTitle}>New Product</Text>
             
-            <TouchableOpacity style={styles.imagePicker} onPress={pickProductImage}>
-              {tempProduct.imageUri ? (
-                <Image source={{ uri: tempProduct.imageUri }} style={styles.imagePreview} />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                    <Icon name="image" size={24} color="#666" />
-                    <Text style={{ color: '#666', fontSize: 12 }}>Add Image</Text>
-                </View>
-              )}
-            </TouchableOpacity>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
+              <TouchableOpacity style={styles.imagePicker} onPress={pickProductImage}>
+                  <Icon name="camera" size={24} color="#666" />
+                  <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
+              </TouchableOpacity>
+              
+              {tempProduct.imageUris.map((uri, idx) => (
+                 <View key={idx} style={styles.imagePreviewContainer}>
+                    <Image source={{ uri }} style={styles.imagePreview} />
+                    <TouchableOpacity 
+                        style={styles.removeImageBtn}
+                        onPress={() => setTempProduct({
+                            ...tempProduct, 
+                            imageUris: tempProduct.imageUris.filter((_, i) => i !== idx)
+                        })}
+                    >
+                        <Icon name="x" size={12} color="#fff" />
+                    </TouchableOpacity>
+                 </View>
+              ))}
+            </ScrollView>
 
             <TextInput
               style={styles.input}
@@ -271,6 +293,27 @@ export default function UploadScreen() {
               value={tempProduct.description}
               onChangeText={t => setTempProduct({...tempProduct, description: t})}
             />
+
+            <Text style={styles.label}>Category</Text>
+            <View style={styles.categoryContainer}>
+              {CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[
+                    styles.categoryChip,
+                    tempProduct.category === cat && styles.categoryChipSelected
+                  ]}
+                  onPress={() => setTempProduct({ ...tempProduct, category: cat })}
+                >
+                  <Text style={[
+                      styles.categoryChipText,
+                      tempProduct.category === cat && styles.categoryChipTextSelected
+                  ]}>
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
             <View style={styles.formActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => setShowProductForm(false)}>
@@ -472,5 +515,54 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  label: {
+      color: '#fff',
+      marginBottom: 10,
+      fontWeight: '600'
+  },
+  categoryContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: 15,
+      gap: 8,
+  },
+  categoryChip: {
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      borderRadius: 20,
+      backgroundColor: '#222',
+      borderWidth: 1,
+      borderColor: '#333',
+  },
+  categoryChipSelected: {
+      backgroundColor: '#fff',
+      borderColor: '#fff',
+  },
+  categoryChipText: {
+      color: '#888',
+      fontSize: 14,
+  },
+  categoryChipTextSelected: {
+      color: '#000',
+      fontWeight: 'bold',
+  },
+  imagePreviewContainer: {
+    marginRight: 10,
+    width: 80,
+    height: 80,
+    position: 'relative',
+  },
+  removeImageBtn: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: 'red',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
   },
 });

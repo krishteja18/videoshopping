@@ -73,6 +73,8 @@ export interface Database {
           price: number
           original_price: number | null
           image_url: string | null
+          images: string[] | null
+          category: string | null
           stock: number
           rating: number
           created_at: string
@@ -85,6 +87,8 @@ export interface Database {
           price: number
           original_price?: number | null
           image_url?: string | null
+          images?: string[] | null
+          category?: string | null
           stock?: number
           rating?: number
           created_at?: string
@@ -97,6 +101,8 @@ export interface Database {
           price?: number
           original_price?: number | null
           image_url?: string | null
+          images?: string[] | null
+          category?: string | null
           stock?: number
           rating?: number
           created_at?: string

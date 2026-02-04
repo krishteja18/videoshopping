@@ -1,14 +1,14 @@
-import LiquidSearchBar from '@/components/LiquidSearchBar';
 import ProfileView from '@/components/ProfileView';
 import { supabase } from '@/lib/supabase';
-import { useUserStore } from '@/store/useStore';
+import { useSearchStore, useUserStore } from '@/store/useStore';
 import { FontAwesome } from '@expo/vector-icons';
+import Octicons from '@expo/vector-icons/Octicons';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useFocusEffect } from '@react-navigation/native';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -61,6 +61,7 @@ const DUMMY_VIDEOS = [
 ];
 
 const ProductCarousel = ({ products }: { products: any[] }) => {
+  const router = useRouter();
   const [activeIndex, setActiveIndex] = useState(0);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
@@ -103,9 +104,12 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
                     <Text style={[styles.ratingText, { opacity: 0.7 }]}>{product.rating?.split(' ').slice(1).join(' ')}</Text>
                   </View>
                 </View>
-                <TouchableOpacity style={styles.viewButton}>
-                  <Text style={styles.viewButtonText}>View</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.viewButton}
+                    onPress={() => router.push(`/product/${product.id}`)}
+                  >
+                    <Text style={styles.viewButtonText}>View</Text>
+                  </TouchableOpacity>
               </BlurView>
             </View>
           )}
@@ -127,7 +131,7 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
   );
 };
 
-const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio }: any) => {
+const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio, onVideoFinished }: any) => {
   const [progress, setProgress] = useState(0);
   const isScrubbing = useRef(false);
   const duration = useRef(0);
@@ -136,8 +140,19 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
   // Memoize source to prevent unnecessary reloads
   const videoSource = useMemo(() => ({ uri: item.videoUrl }), [item.videoUrl]);
 
+  useEffect(() => {
+    if (index === currentIndex && localVideoRef.current) {
+        // If we just scrolled to this video, replay it from start
+        localVideoRef.current.replayAsync();
+    }
+  }, [currentIndex, index]);
+
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.isLoaded) {
+      if (status.didJustFinish) {
+          onVideoFinished(index);
+          return;
+      }
       if (status.durationMillis) {
         duration.current = status.durationMillis;
         if (!isScrubbing.current) {
@@ -196,7 +211,7 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
         source={videoSource}
         style={styles.backgroundVideo}
         resizeMode={ResizeMode.COVER}
-        isLooping
+        isLooping={false}
         shouldPlay={index === currentIndex}
         isMuted={muted}
         onLoadStart={ensureAudio}
@@ -212,7 +227,7 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
       >
         {!muted && (
            <View style={styles.muteBadge}>
-             <Icon name="volume-2" size={20} color="#fff" />
+             <Octicons name="unmute" size={20} color="#fff" />
            </View>
         )}
       </Pressable>
@@ -226,22 +241,22 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 
 
         <TouchableOpacity style={styles.actionButton}>
-          <Icon name="video" size={28} color="#fff" />
+          <Octicons name="device-camera-video" size={24} color="#fff" />
           <Text style={styles.actionLabel}>Call</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionButton}>
-          <Icon name="heart" size={28} color="#fff" />
+          <Octicons name="heart" size={24} color="#fff" />
           <Text style={styles.actionCount}>{item.likes}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionButton}>
-          <Icon name="message-circle" size={28} color="#fff" />
+          <Icon name="message-circle" size={24} color="#fff" />
           <Text style={styles.actionCount}>{item.comments}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionButton}>
-          <Icon name="share-2" size={28} color="#fff" />
+          <Octicons name="paper-airplane" size={24} color="#fff" />
           <Text style={styles.actionCount}>89</Text>
         </TouchableOpacity>
       </View>
@@ -257,7 +272,7 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
             </TouchableOpacity>
             {item.isVerified && (
               <View style={styles.verifiedBadge}>
-                <Icon name="check-circle" size={14} color="#20D6E6" />
+                <Octicons name="verified" size={14} color="#20D6E6" />
               </View>
             )}
           </View>
@@ -282,15 +297,29 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 
 export default function HomeScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { fetchProfile } = useUserStore();
+  const { filteredVideos: searchFilteredVideos } = useSearchStore();
+  
   const [activeTab, setActiveTab] = useState('home');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [muted, setMuted] = useState(true);
   const [videos, setVideos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isFilteredMode, setIsFilteredMode] = useState(false);
 
   const videoRefs = useRef<(Video | null)[]>([]);
+  const flatListRef = useRef<FlatList>(null);
+
+  const handleVideoFinished = (finishedIndex: number) => {
+    if (finishedIndex < videos.length - 1) {
+        flatListRef.current?.scrollToIndex({ index: finishedIndex + 1, animated: true });
+    } else {
+        // Optional: Replay the last video or just stop
+        videoRefs.current[finishedIndex]?.replayAsync();
+    }
+  };
 
   useEffect(() => {
     fetchProfile();
@@ -355,8 +384,31 @@ export default function HomeScreen() {
   };
 
   useEffect(() => {
-    fetchVideos();
+    // Only fetch videos if we're not in filtered mode from search
+    if (!params.filteredVideos) {
+      fetchVideos();
+    }
   }, []);
+
+  // Handle filtered videos from search
+  useEffect(() => {
+    if (params.filteredVideos && params.startIndex) {
+      try {
+        const filtered = JSON.parse(params.filteredVideos as string);
+        const startIdx = parseInt(params.startIndex as string, 10);
+        setVideos(filtered);
+        setIsFilteredMode(true);
+        setCurrentIndex(startIdx);
+        setLoading(false); // Stop loading since we have videos
+        // Scroll to the selected video
+        setTimeout(() => {
+          flatListRef.current?.scrollToIndex({ index: startIdx, animated: false });
+        }, 100);
+      } catch (error) {
+        console.error('Error parsing filtered videos:', error);
+      }
+    }
+  }, [params.filteredVideos, params.startIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -408,18 +460,27 @@ export default function HomeScreen() {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <LiquidSearchBar onPress={() => router.push('/search' as any)} />
+      <TouchableOpacity 
+        style={styles.homeSearchBar} 
+        activeOpacity={0.8}
+        onPress={() => router.push('/search' as any)}
+      >
+         <Octicons name="search" size={18} color="rgba(255,255,255,0.7)" />
+         <Text style={styles.homeSearchText}>Search products, brands and videos</Text>
+         <Icon name="mic" size={18} color="rgba(255,255,255,0.7)" />
+      </TouchableOpacity>
     </View>
   );
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {activeTab === 'profile' ? null : renderHeader()}
+      {/* Search bar removed - now accessible via bottom nav */}
       {activeTab === 'profile' ? (
         <ProfileView onSignOut={handleSignOut} />
       ) : (
       <FlatList
+        ref={flatListRef}
         data={videos}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item, index }) => (
@@ -431,6 +492,7 @@ export default function HomeScreen() {
             setMuted={setMuted} 
             videoRefs={videoRefs}
             ensureAudio={ensureAudio}
+            onVideoFinished={handleVideoFinished}
           />
         )}
         pagingEnabled
@@ -464,23 +526,32 @@ export default function HomeScreen() {
       {/* Bottom Navigation */}
       <View style={styles.bottomNavContainer}>
         <View style={styles.bottomNav}>
-          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('home')}>
-            <Icon name="home" size={24} color={activeTab === 'home' ? '#000' : '#999'} />
+          <TouchableOpacity 
+            style={styles.navItem} 
+            onPress={() => {
+              setActiveTab('home');
+              if (isFilteredMode) {
+                setIsFilteredMode(false);
+                fetchVideos(); // Reload full feed
+              }
+            }}
+          >
+            <Octicons name="home" size={24} color={activeTab === 'home' ? '#000' : '#999'} />
             <Text style={[styles.navLabel, activeTab === 'home' ? styles.navLabelActive : styles.navLabelInactive]}>Home</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('discover')}>
-            <Icon name="compass" size={24} color={activeTab === 'discover' ? '#000' : '#999'} />
-             <Text style={[styles.navLabel, activeTab === 'discover' ? styles.navLabelActive : styles.navLabelInactive]}>Discover</Text>
+          <TouchableOpacity style={styles.navItem} onPress={() => router.push('/search' as any)}>
+            <Octicons name="search" size={24} color={'#999'} />
+             <Text style={[styles.navLabel, styles.navLabelInactive]}>Search</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.createButton} onPress={() => setActiveTab('create')}>
-            <Icon name="plus" size={24} color="#fff" />
+            <Octicons name="plus" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('favorites')}>
-            <Icon name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#999'} />
+            <Octicons name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#999'} />
              <Text style={[styles.navLabel, activeTab === 'favorites' ? styles.navLabelActive : styles.navLabelInactive]}>Favorites</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('profile')}>
-            <Icon name="user" size={24} color={activeTab === 'profile' ? '#000' : '#999'} />
+            <Octicons name="person" size={24} color={activeTab === 'profile' ? '#000' : '#999'} />
              <Text style={[styles.navLabel, activeTab === 'profile' ? styles.navLabelActive : styles.navLabelInactive]}>Profile</Text>
           </TouchableOpacity>
         </View>
@@ -513,7 +584,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     opacity: 0.7,
-    fontWeight: '600',
+    fontFamily: 'Nunito-Regular',
   },
   headerTabDivider: {
     width: 1,
@@ -525,7 +596,20 @@ const styles = StyleSheet.create({
   headerTabActive: {
     color: '#fff',
     fontSize: 17,
-    fontWeight: 'bold',
+    fontFamily: 'Nunito-SemiBold',
+  },
+  headerSearchButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+    marginLeft: 10,
+  },
+  headerSearchBlur: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)', // Darker glass for contrast on video
   },
   headerRight: {
     flexDirection: 'row',
@@ -579,13 +663,13 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 10,
     marginTop: 4,
-    fontWeight: '500',
+    fontFamily: 'Nunito-Medium',
   },
   actionCount: {
     color: '#fff',
     fontSize: 12,
     marginTop: 4,
-    fontWeight: '600',
+    fontFamily: 'Nunito-Medium',
   },
   avatarContainer: {
     marginBottom: 24,
@@ -640,7 +724,7 @@ const styles = StyleSheet.create({
   username: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontFamily: 'Nunito-SemiBold',
     marginRight: 8,
   },
   followButton: {
@@ -654,7 +738,7 @@ const styles = StyleSheet.create({
   followButtonText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: 'Nunito-SemiBold',
   },
   verifiedBadge: {
     marginTop: 2,
@@ -663,9 +747,10 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     lineHeight: 20,
+    fontFamily: 'Nunito-Regular',
   },
   hashtag: {
-    fontWeight: 'bold',
+    fontFamily: 'Nunito-Medium',
   },
   productCarouselContainer: {
     width: width,
@@ -700,7 +785,7 @@ const styles = StyleSheet.create({
   cardProductTitle: {
     color: '#fff',
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: 'Nunito-Medium',
     marginBottom: 4,
   },
   priceRow: {
@@ -712,12 +797,13 @@ const styles = StyleSheet.create({
   cardPrice: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontFamily: 'Nunito-SemiBold',
   },
   cardOldPrice: {
     color: '#aaa',
     fontSize: 13,
     textDecorationLine: 'line-through',
+    fontFamily: 'Nunito-Regular',
   },
   ratingRow: {
     flexDirection: 'row',
@@ -726,6 +812,7 @@ const styles = StyleSheet.create({
   ratingText: {
     color: '#ccc',
     fontSize: 11,
+    fontFamily: 'Nunito-Regular',
   },
   viewButton: {
     backgroundColor: '#fff',
@@ -737,7 +824,7 @@ const styles = StyleSheet.create({
   viewButtonText: {
     color: '#000',
     fontSize: 13,
-    fontWeight: 'bold',
+    fontFamily: 'Nunito-SemiBold',
   },
   paginationContainer: {
     flexDirection: 'row',
@@ -786,13 +873,14 @@ const styles = StyleSheet.create({
   navLabel: {
     fontSize: 10,
     marginTop: 4,
+    fontFamily: 'Nunito-Medium',
   },
   navLabelInactive: {
     color: '#999',
   },
   navLabelActive: {
     color: '#000',
-    fontWeight: '800',
+    fontFamily: 'Nunito-Bold',
   },
   createButton: {
     marginBottom: 8,
@@ -831,5 +919,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 3,
+  },
+  homeSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)', // Product Card Style
+    height: 48,
+    width: '100%',
+    borderRadius: 30, 
+    borderWidth: .5,
+    borderColor: '#fff', // Subtle border for product card look
+    paddingHorizontal: 16,
+  },
+  homeSearchText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 15,
+    marginLeft: 10,
+    flex: 1,
+    fontFamily: 'Nunito-Regular', 
   },
 });

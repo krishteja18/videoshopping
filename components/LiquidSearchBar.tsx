@@ -30,7 +30,7 @@ export default function LiquidSearchBar({ onPress }: LiquidSearchBarProps) {
       <BlurView intensity={30} tint="light" style={styles.blurContainer}>
         <View style={styles.innerRow}>
           <Icon name="search" size={20} color="#666" style={styles.searchIcon} />
-          <Text style={styles.placeholderText}>Search products, brands...</Text>
+          <Text style={styles.placeholderText}>Search products, brands and videos</Text>
           <View style={styles.micIconContainer}>
              <Icon name="mic" size={18} color="#666" />
           </View>
