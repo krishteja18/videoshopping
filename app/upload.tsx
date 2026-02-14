@@ -1,11 +1,22 @@
+
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import { useUserStore } from '@/store/useStore';
 import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, router } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Video as VideoCompressor } from 'react-native-compressor';
 import Icon from 'react-native-vector-icons/Feather';
+
+type ShopifyCategory = {
+  id: string;
+  name: string;
+  full_name: string;
+  level: number;
+  parent_id: string | null;
+  attributes: { name: string; handle: string; values: string[] }[];
+};
 
 type Product = {
   title: string;
@@ -13,65 +24,198 @@ type Product = {
   imageUris: string[];
   description: string;
   category: string;
+  categoryId?: string;
   specifications?: Record<string, any>;
   hasVariants?: boolean;
-  variants?: { name: string; options: string[] }[]; // e.g. [{name: 'Color', options: ['Red', 'Blue']}]
+  variants?: { name: string; options: string[] }[];
   generatedVariants?: { id: string; name: string; price: string; stock: string; options?: any }[];
+  media?: { uri: string; type: 'image' | 'video'; variantTag: string | null }[]; // Added for Phase 3
 };
-
-// Configuration for Dynamic Fields
-const CATEGORY_CONFIG: Record<string, { label: string; key: string; type: 'text' | 'select'; options?: string[] }[]> = {
-  'fashion': [
-    { label: 'Material', key: 'material', type: 'text' },
-    { label: 'Fit', key: 'fit', type: 'select', options: ['Slim', 'Regular', 'Oversized', 'Skinny'] },
-    { label: 'Pattern', key: 'pattern', type: 'text' },
-    { label: 'Care Instructions', key: 'care_instructions', type: 'text' }
-  ],
-  'electronics': [
-    { label: 'Warranty (Months)', key: 'warranty', type: 'text' },
-    { label: 'Screen Size', key: 'screen_size', type: 'text' },
-    { label: 'Storage', key: 'storage', type: 'select', options: ['64GB', '128GB', '256GB', '512GB', '1TB'] },
-    { label: 'Battery Capacity', key: 'battery', type: 'text' }
-  ],
-  'home-living': [
-    { label: 'Dimensions (LxWxH)', key: 'dimensions', type: 'text' },
-    { label: 'Weight (kg)', key: 'weight', type: 'text' },
-    { label: 'Material', key: 'material', type: 'text' }
-  ],
-  'beauty': [
-    { label: 'Volume', key: 'volume', type: 'select', options: ['50ml', '100ml', '200ml', '500ml'] },
-    { label: 'Skin Type', key: 'skin_type', type: 'select', options: ['All', 'Dry', 'Oily', 'Sensitive'] },
-    { label: 'Ingredients', key: 'ingredients', type: 'text' }
-  ]
-};
-
-const CATEGORIES: any[] = []; // Will fetch from DB
 
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_VIDEO_DURATION = 90; // 1.5 minutes
-
+const MIN_COMPRESS_SIZE_MB = 5;
 
 export default function UploadScreen() {
   const { profile } = useUserStore();
   const [uploading, setUploading] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [video, setVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [caption, setCaption] = useState('');
   
   const [products, setProducts] = useState<Product[]>([]);
   const [showProductForm, setShowProductForm] = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3>(1); // 1: Category, 2: Details, 3: Variants
-  const [categories, setCategories] = useState<any[]>([]);
-  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [] });
+  
+  // Category Selection State
+  const [categoryPath, setCategoryPath] = useState<ShopifyCategory[]>([]);
+  const [currentCategories, setCurrentCategories] = useState<ShopifyCategory[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  
+  // Form State
+  const [tempProduct, setTempProduct] = useState<Product>({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [], media: [] });
   const [newVariantName, setNewVariantName] = useState('');
   const [newVariantValues, setNewVariantValues] = useState('');
+  const [currentVariantTags, setCurrentVariantTags] = useState<string[]>([]);
+  
+  // Suggested Options from Taxonomy (e.g. Size, Color)
+  const [suggestedAttributes, setSuggestedAttributes] = useState<string[]>([]);
 
-  React.useEffect(() => {
-    fetchCategories();
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ShopifyCategory[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    fetchCategories(null);
   }, []);
 
-  const fetchCategories = async () => {
-    const { data } = await supabase.from('categories').select('*').order('name');
-    if (data) setCategories(data);
+  const fetchCategories = async (parentId: string | null) => {
+    setLoadingCategories(true);
+    let query = supabase.from('shopify_categories').select('*').order('name');
+    
+    if (parentId) {
+        query = query.eq('parent_id', parentId);
+    } else {
+        query = query.is('parent_id', null);
+    }
+
+    const { data } = await query;
+    if (data) {
+        setCurrentCategories(data);
+    }
+    setLoadingCategories(false);
+  };
+
+  const searchCategories = async (query: string) => {
+      if (!query.trim()) {
+          setSearchResults([]);
+          setIsSearching(false);
+          return;
+      }
+      setIsSearching(true);
+      const { data } = await supabase
+          .from('shopify_categories')
+          .select('*')
+          .ilike('full_name', `%${query}%`)
+          .limit(20);
+      
+      if (data) {
+          setSearchResults(data);
+      }
+      setIsSearching(false);
+  };
+
+  const handleCategorySelect = async (category: ShopifyCategory) => {
+    // 1. Add to path
+    const newPath = [...categoryPath, category];
+    setCategoryPath(newPath);
+
+    // 2. Check for children
+    setLoadingCategories(true);
+    const { data: children } = await supabase
+        .from('shopify_categories')
+        .select('*')
+        .eq('parent_id', category.id)
+        .order('name');
+    setLoadingCategories(false);
+
+    if (children && children.length > 0) {
+        // Has children, drill down
+        setCurrentCategories(children);
+    } else {
+        // Leaf node, select it
+        setTempProduct({ 
+            ...tempProduct, 
+            category: category.full_name, // e.g. "Apparel > Shirts > T-Shirts"
+            categoryId: category.id
+        });
+        
+        // Extract attribute names for suggestions
+        if (category.attributes) {
+            const attrNames = category.attributes.map(a => a.name);
+            setSuggestedAttributes(attrNames);
+            
+            // Also populate variants logic if there are distinct variant attributes
+            // For now just storing suggestions to show in UI
+        }
+    }
+  };
+
+  const handleBackCategory = () => {
+      if (categoryPath.length === 0) return;
+      
+      const newPath = [...categoryPath];
+      newPath.pop(); // Remove last
+      setCategoryPath(newPath);
+
+      // Fetch siblings of the new last item, or root if empty
+      const parentId = newPath.length > 0 ? newPath[newPath.length - 1].id : null;
+      
+      // We actually need to fetch children of the *parent* of the item we just popped.
+      // E.g. Path: [A, B]. We are looking at C's children.
+      // Pop B. Path: [A]. We want to see A's children (which include B).
+      
+      // Wait, logically:
+      // Path = [Apparel]. Showing: Clothing, Shoes.
+      // User clicks Clothing. Path = [Apparel, Clothing]. Showing: Shirts, Pants.
+      // User clicks Back. Path = [Apparel]. Should show: Clothing, Shoes (Children of Apparel).
+      
+      const lastItem = newPath.length > 0 ? newPath[newPath.length - 1] : null;
+      // If lastItem is null, we are at root.
+      // If lastItem is A, we want children of A. (to allow re-selecting B)
+      
+      // NOTE: parentId logic in my fetchCategories takes parent of what we want to SHOW.
+      // If we want to show children of A, parentId = A.id.
+      
+      if (lastItem) {
+          fetchCategories(lastItem.id); // Get children of last remaining item
+      } else {
+          fetchCategories(null); // Get root
+      }
+      
+      // If we had a selected product category (leaf), clear it
+      if (tempProduct.category) {
+          setTempProduct({ ...tempProduct, category: '', categoryId: undefined });
+      }
+  };
+
+  const resetForm = () => {
+       setShowProductForm(false);
+       setTempProduct({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [] });
+       setCategoryPath([]);
+       fetchCategories(null);
+       setNewVariantName('');
+       setNewVariantValues('');
+       setCurrentVariantTags([]);
+       setCurrentVariantTags([]);
+       setCurrentVariantTags([]);
+       setSuggestedAttributes([]);
+       setSearchQuery('');
+       setSearchResults([]);
+  };
+
+  const getColorVariantGroup = () => {
+      // Find the variant group that represents "Color"
+      if (!tempProduct.variants) return null;
+      return tempProduct.variants.find(v => v.name.toLowerCase() === 'color' || v.name.toLowerCase() === 'colour');
+  };
+
+  const pickMediaForVariant = async (variantTag: string | null) => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, // Only images for now
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      const newMedia = { uri: result.assets[0].uri, type: 'image' as const, variantTag };
+      setTempProduct(prev => ({ 
+          ...prev, 
+          imageUris: [...prev.imageUris, result.assets[0].uri], // Keep legacy for thumbnail compatibility
+          media: [...(prev.media || []), newMedia]
+      }));
+    }
   };
 
   const pickVideo = async () => {
@@ -81,31 +225,46 @@ export default function UploadScreen() {
       quality: 1,
     });
 
-
-
     if (!result.canceled) {
       const asset = result.assets[0];
-      
-      // 1. Check Duration
       if (asset.duration && asset.duration > MAX_VIDEO_DURATION * 1000) {
         Alert.alert('Video too long', `Please select a video under ${MAX_VIDEO_DURATION} seconds.`);
         return;
       }
-
-      // 2. Check File Size (if available)
-      if (asset.fileSize && asset.fileSize > MAX_VIDEO_SIZE) {
+      const fileSize = asset.fileSize || 0;
+      if (fileSize > MAX_VIDEO_SIZE) {
         Alert.alert('File too large', `Please select a video under ${MAX_VIDEO_SIZE / (1024 * 1024)}MB.`);
         return;
       }
 
-      setVideo(asset);
+      if (fileSize > MIN_COMPRESS_SIZE_MB * 1024 * 1024) {
+          setIsCompressing(true);
+          setVideo(asset);
+          try {
+              const compressedUri = await VideoCompressor.compress(asset.uri, {
+                  compressionMethod: 'manual',
+                  bitrate: 1500000, 
+              });
+              const compressedInfo = await FileSystem.getInfoAsync(compressedUri);
+              if (compressedInfo.exists) {
+                  setVideo({ ...asset, uri: compressedUri, fileSize: compressedInfo.size });
+              }
+          } catch (error) {
+              console.error('Compression failed:', error);
+          } finally {
+              setIsCompressing(false);
+          }
+      } else {
+          setVideo(asset);
+      }
     }
   };
 
+  /* Deprecated single picker
   const pickProductImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, // You might want to disable this if selecting multiple at once is desired, but expo-image-picker single selection with editing is standard. To allow multiple, we need 'allowsMultipleSelection: true' (if supported) or just call this contentiously.
+      allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
     });
@@ -113,7 +272,8 @@ export default function UploadScreen() {
     if (!result.canceled) {
       setTempProduct({ ...tempProduct, imageUris: [...tempProduct.imageUris, result.assets[0].uri] });
     }
-  };
+  }; */
+
 
   const addProduct = () => {
     if (!tempProduct.title || !tempProduct.price || tempProduct.imageUris.length === 0 || !tempProduct.category) {
@@ -121,40 +281,27 @@ export default function UploadScreen() {
       return;
     }
     setProducts([...products, tempProduct]);
-    setTempProduct({ title: '', price: '', imageUris: [], description: '', category: '', specifications: {}, variants: [], generatedVariants: [] });
-    setShowProductForm(false);
-    setStep(1); // Reset step
+    resetForm();
   };
 
-  const handleNext = () => {
-      // Check if category needs variants (hardcoded for Fashion now, or check slug)
-      if (tempProduct.category === 'fashion') {
-          setStep(3);
-      } else {
-          addProduct();
-      }
-  };
-
+  // Add Variant Option Group
   const addVariantOption = () => {
-      if (!newVariantName || !newVariantValues) return;
-      const options = newVariantValues.split(',').map(s => s.trim()).filter(Boolean);
+      if (!newVariantName || currentVariantTags.length === 0) return;
+      const options = [...currentVariantTags];
       
       const newGroup = { name: newVariantName, options };
       const updatedVariants = [...(tempProduct.variants || []), newGroup];
 
-      // Recursively generate Cartesian product
+      // Generates permutations
       const generateCartesian = (groups: { name: string; options: string[] }[]) => {
           if (groups.length === 0) return [];
-          
           let results: { name: string; options: any }[] = groups[0].options.map(opt => ({ 
               name: opt, 
               options: { [groups[0].name]: opt } 
           }));
-
           for (let i = 1; i < groups.length; i++) {
               const nextGroup = groups[i];
               const newResults: { name: string; options: any }[] = [];
-              
               for (const res of results) {
                   for (const opt of nextGroup.options) {
                       newResults.push({
@@ -169,7 +316,6 @@ export default function UploadScreen() {
       };
 
       const combinations = generateCartesian(updatedVariants);
-      
       const generated = combinations.map(c => ({
           id: Math.random().toString(),
           name: c.name,
@@ -185,134 +331,121 @@ export default function UploadScreen() {
       });
       setNewVariantName('');
       setNewVariantValues('');
+      setCurrentVariantTags([]);
   };
-
+  
+  // Re-use existing uploadFile and handleSubmit (omitted/collapsed for brevity if valid, but I must write full file)
+  // ... copying logic
   const uploadFile = async (uri: string, bucket: string, folder: string) => {
     const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
     const path = `${folder}/${Date.now()}.${ext}`;
-    
-    // Get session for authentication
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('No session found');
+    let publicUrl = '';
 
-    // Use FileSystem.uploadAsync to stream the file directly to Supabase
-    // This bypasses the JS memory limit that crashes apps with large Base64 strings
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
-    
-    const response = await FileSystem.uploadAsync(uploadUrl, uri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: supabaseAnonKey,
-        'Content-Type': bucket === 'videos' ? 'video/mp4' : 'image/jpeg',
-      },
-    });
-
-    if (response.status !== 200) {
-      console.error('Upload failed:', response.body);
-      throw new Error('Failed to upload file');
+    if (bucket === 'videos') {
+         const { data, error } = await supabase.functions.invoke('upload-r2-url', {
+             body: { filename: `${Date.now()}_${ext}`, contentType: 'video/mp4' }
+         });
+         if (error || !data?.uploadUrl) throw new Error('Failed to get video upload URL');
+         
+         const uploadResponse = await FileSystem.uploadAsync(data.uploadUrl, uri, {
+             httpMethod: 'PUT',
+             uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+             headers: { 'Content-Type': 'video/mp4' },
+         });
+         if (uploadResponse.status !== 200) throw new Error(`R2 Upload failed`);
+         publicUrl = data.publicUrl;
+    } else {
+        const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
+        const response = await FileSystem.uploadAsync(uploadUrl, uri, {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseAnonKey, 'Content-Type': 'image/jpeg' },
+        });
+        if (response.status !== 200) throw new Error(`Upload failed`);
+        const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path);
+        publicUrl = publicData.publicUrl;
     }
-    
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
     return publicUrl;
   };
 
   const handleSubmit = async () => {
-    if (!video) {
-        Alert.alert('Error', 'Please select a video');
-        return;
-    }
-    if (products.length === 0) {
-        Alert.alert('Error', 'Please add at least one product');
-        return;
-    }
-    if (!profile) {
-        Alert.alert('Error', 'User profile not found. Please log in again.');
-        return;
-    }
+    if (!video) { Alert.alert('Error', 'Please select a video'); return; }
+    if (products.length === 0) { Alert.alert('Error', 'Please add at least one product'); return; }
+    if (!profile) { Alert.alert('Error', 'User profile not found. Please log in again.'); return; }
 
     try {
       setUploading(true);
-      
-      // 1. Upload Video
       const videoUrl = await uploadFile(video.uri, 'videos', profile.id);
-      
-      // 2. Insert Video Record
-      const { data: videoData, error: videoError } = await supabase
-        .from('videos')
-        .insert({
-          seller_id: profile.id,
-          video_url: videoUrl,
-          description: caption,
-        })
-        .select()
-        .single();
-      
+      const { data: videoData, error: videoError } = await supabase.from('videos').insert({
+          seller_id: profile.id, video_url: videoUrl, description: caption,
+        }).select().single();
       if (videoError) throw videoError;
 
-      // 3. Process Products
       for (const prod of products) {
-        // Upload all images
-        const uploadedImageUrls = [];
-        for (const uri of prod.imageUris) {
-            const iUrl = await uploadFile(uri, 'product-images', profile.id);
-            uploadedImageUrls.push(iUrl);
+        // Upload all media files
+        const mediaUploads = [];
+        if (prod.media && prod.media.length > 0) {
+            for (const m of prod.media) {
+                const url = await uploadFile(m.uri, 'product-images', profile.id);
+                mediaUploads.push({ ...m, finalUrl: url });
+            }
+        } else if (prod.imageUris.length > 0) {
+            // Fallback for legacy / if no media structure
+             for (const uri of prod.imageUris) {
+                const url = await uploadFile(uri, 'product-images', profile.id);
+                mediaUploads.push({ uri, type: 'image', variantTag: null, finalUrl: url });
+            }
         }
+
+        // Determine main image (first one)
+        const mainImageUrl = mediaUploads.length > 0 ? mediaUploads[0].finalUrl : null;
         
-        const mainImageUrl = uploadedImageUrls[0];
-        
-        // Create Product
-        const { data: productData, error: productError } = await supabase
-          .from('products')
-          .insert({
+        const { data: productData, error: productError } = await supabase.from('products').insert({
             seller_id: profile.id,
             title: prod.title,
             price: parseFloat(prod.price),
             description: prod.description,
-            image_url: mainImageUrl, // Keep backward compatibility
-            images: uploadedImageUrls,
-            category: prod.category,
-            specifications: prod.specifications || {}, // Save the dynamic specs
-          })
-          .select()
-          .single();
-
+            image_url: mainImageUrl, // Legacy / Main
+            images: mediaUploads.map(m => m.finalUrl), // Legacy Array
+            category: prod.category, 
+            specifications: prod.specifications || {},
+            // New fields
+            vendor: profile.username || 'SwipeKart',
+            status: 'active' 
+          }).select().single();
         if (productError) throw productError;
 
-        // 4. Insert Variants (if any)
+        // Insert into product_media
+        if (mediaUploads.length > 0) {
+            const mediaInserts = mediaUploads.map((m, index) => ({
+                product_id: productData.id,
+                url: m.finalUrl,
+                type: m.type || 'image',
+                alt: prod.title,
+                position: index,
+                variant_group_name: m.variantTag ? 'Color' : null, // Hardcoding 'Color' as the group for now
+                variant_group_value: m.variantTag
+            }));
+            const { error: mediaError } = await supabase.from('product_media').insert(mediaInserts);
+            if (mediaError) throw mediaError;
+        }
+
         if (prod.generatedVariants && prod.generatedVariants.length > 0) {
             const variantsToInsert = prod.generatedVariants.map(v => ({
                 product_id: productData.id,
                 variant_name: v.name,
                 price: parseFloat(v.price) || parseFloat(prod.price),
                 stock_quantity: parseInt(v.stock) || 0,
-                sku: `${productData.id}-${v.name.replace(/[^a-zA-Z0-9]/g, '-')}`, // sanitized SKU
-                options: v.options // Use the options object generated by cartesian
+                sku: `${productData.id}-${v.name.replace(/[^a-zA-Z0-9]/g, '-')}`,
+                variant_options: v.options
             }));
-
-            const { error: variantError } = await supabase
-                .from('product_variants')
-                .insert(variantsToInsert);
-            
-            if (variantError) throw variantError;
+            await supabase.from('product_variants').insert(variantsToInsert);
         }
-
-        // Link Video <-> Product
-        const { error: linkError } = await supabase
-          .from('video_products')
-          .insert({
-            video_id: videoData.id,
-            product_id: productData.id,
-          });
-
-        if (linkError) throw linkError;
+        await supabase.from('video_products').insert({ video_id: videoData.id, product_id: productData.id });
       }
-
-      Alert.alert('Success', 'Video uploaded successfully!', [
-        { text: 'OK', onPress: () => router.back() }
-      ]);
+      Alert.alert('Success', 'Video uploaded successfully!', [{ text: 'OK', onPress: () => router.back() }]);
     } catch (error: any) {
       Alert.alert('Error', error.message);
     } finally {
@@ -324,15 +457,17 @@ export default function UploadScreen() {
     <>
       <Stack.Screen options={{ title: 'Upload Video', headerTintColor: '#fff', headerStyle: { backgroundColor: '#000' } }} />
       <ScrollView style={styles.container}>
-        {/* Video Section */}
+        {/* Video Section - Collapsible or small preview if products added? For now keep same. */}
         <TouchableOpacity style={styles.videoPlaceholder} onPress={pickVideo}>
           {video ? (
             <View style={styles.videoSelected}>
-                <Image source={{ uri: video.uri }} style={styles.videoPreview} resizeMode="cover" /> 
-                {/* Note: In real app use Video component for preview, Image works for thumbnails often generated by picker */}
-                <View style={styles.changeOverlay}>
-                    <Icon name="edit-2" size={24} color="#fff" />
-                </View>
+                <Image source={{ uri: video.uri }} style={[styles.videoPreview, isCompressing && { opacity: 0.5 }]} resizeMode="cover" /> 
+                {isCompressing && (
+                    <View style={styles.loadingOverlay}>
+                        <ActivityIndicator size="large" color="#fff" />
+                    </View>
+                )}
+                {!isCompressing && <View style={styles.changeOverlay}><Icon name="edit-2" size={24} color="#fff" /></View>}
             </View>
           ) : (
             <>
@@ -351,15 +486,13 @@ export default function UploadScreen() {
           onChangeText={setCaption}
         />
 
-        {/* Products List */}
         <Text style={styles.sectionTitle}>Products ({products.length})</Text>
-        
         {products.map((p, i) => (
           <View key={i} style={styles.productCard}>
             <Image source={{ uri: p.imageUris[0] }} style={styles.productThumb} />
             <View style={{ flex: 1 }}>
               <Text style={styles.productTitle}>{p.title}</Text>
-              <Text style={styles.productPrice}>${p.price}</Text>
+              <Text style={styles.productPrice} numberOfLines={1}>{p.category}</Text>
             </View>
             <TouchableOpacity onPress={() => setProducts(products.filter((_, idx) => idx !== i))}>
                 <Icon name="x" size={20} color="#666" />
@@ -367,596 +500,324 @@ export default function UploadScreen() {
           </View>
         ))}
 
-          {/* Add Product Form */}
-          {showProductForm ? (
+        {showProductForm ? (
             <View style={styles.formCard}>
-              <View style={styles.formHeader}>
-                 <Text style={styles.formTitle}>{step === 1 ? 'Select Category' : 'Product Details'}</Text>
-                 {step === 2 && (
-                     <TouchableOpacity onPress={() => setStep(1)}>
-                         <Text style={{  color: '#888', marginRight: 10 }}>Change</Text>
-                     </TouchableOpacity>
-                 )}
-                 {step === 3 && (
-                     <TouchableOpacity onPress={() => setStep(2)}>
-                         <Text style={{  color: '#888', marginRight: 10 }}>Back</Text>
-                     </TouchableOpacity>
-                 )}
-              </View>
-              
-              {step === 1 ? (
-                  /* Step 1: Category Selection */
-                  <View style={styles.categoryGrid}>
-                      {categories.map((cat) => (
-                          <TouchableOpacity 
-                            key={cat.id} 
-                            style={styles.categoryCard}
-                            onPress={() => {
-                                setTempProduct({ ...tempProduct, category: cat.slug }); // Store slug
-                                setStep(2);
-                            }}
-                          >
-                              <View style={styles.categoryIconCircle}>
-                                  <Icon name={cat.icon || 'box'} size={24} color="#000" />
-                              </View>
-                              <Text style={styles.categoryCardText}>{cat.name}</Text>
-                          </TouchableOpacity>
-                      ))}
-                  </View>
-              ) : step === 2 ? (
-                  /* Step 2: Basic Details */
-                  <>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
-                      <TouchableOpacity style={styles.imagePicker} onPress={pickProductImage}>
-                          <Icon name="camera" size={24} color="#666" />
-                          <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
-                      </TouchableOpacity>
-                      
-                      {tempProduct.imageUris.map((uri, idx) => (
-                        <View key={idx} style={styles.imagePreviewContainer}>
-                            <Image source={{ uri }} style={styles.imagePreview} />
-                            <TouchableOpacity 
-                                style={styles.removeImageBtn}
-                                onPress={() => setTempProduct({
-                                    ...tempProduct, 
-                                    imageUris: tempProduct.imageUris.filter((_, i) => i !== idx)
-                                })}
-                            >
-                                <Icon name="x" size={12} color="#fff" />
-                            </TouchableOpacity>
-                        </View>
-                      ))}
+                {/* Header / Breadcrumb */}
+                <View style={styles.formHeader}>
+                    {categoryPath.length > 0 && !tempProduct.categoryId && (
+                        <TouchableOpacity onPress={handleBackCategory} style={{ padding: 5 }}>
+                             <Icon name="arrow-left" size={24} color="#fff" />
+                        </TouchableOpacity>
+                    )}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: 10 }}>
+                        {categoryPath.length === 0 ? (
+                            <Text style={styles.formTitle}>Select Category</Text>
+                        ) : (
+                            <Text style={[styles.formTitle, { fontSize: 14, color: '#aaa' }]}>
+                                {categoryPath.map(c => c.name).join(' > ')}
+                            </Text>
+                        )}
                     </ScrollView>
+                </View>
 
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Product Title"
-                      placeholderTextColor="#666"
-                      value={tempProduct.title}
-                      onChangeText={t => setTempProduct({...tempProduct, title: t})}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Price (₹)"
-                      placeholderTextColor="#666"
-                      keyboardType="numeric"
-                      value={tempProduct.price}
-                      onChangeText={t => setTempProduct({...tempProduct, price: t})}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Description (Optional)"
-                      placeholderTextColor="#666"
-                      value={tempProduct.description}
-                      onChangeText={t => setTempProduct({...tempProduct, description: t})}
-                    />
+                {!tempProduct.categoryId ? (
+                    // CATEGORY PICKER
+                    <View style={{ minHeight: 300 }}>
+                        {/* Search Bar */}
+                        <View style={styles.searchContainer}>
+                            <Icon name="search" size={20} color="#666" style={{ marginRight: 10 }} />
+                            <TextInput 
+                                style={styles.searchInput}
+                                placeholder="Search categories (e.g. Shirts, Shoes)"
+                                placeholderTextColor="#666"
+                                value={searchQuery}
+                                onChangeText={(t) => {
+                                    setSearchQuery(t);
+                                    searchCategories(t);
+                                }}
+                            />
+                            {searchQuery.length > 0 && (
+                                <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+                                    <Icon name="x" size={18} color="#666" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
 
-                    {/* Show Selected Category */}
-                    <View style={styles.selectedCategoryChip}>
-                        <Text style={{ color: '#888', fontSize: 12 }}>Category: </Text>
-                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{categories.find(c => c.slug === tempProduct.category)?.name}</Text>
-                    </View>
-
-                    {/* Dynamic Attributes Form */}
-                    {CATEGORY_CONFIG[tempProduct.category]?.length > 0 && (
-                        <View style={styles.dynamicFormSection}>
-                            <Text style={styles.sectionHeader}>Product Attributes</Text>
-                            {CATEGORY_CONFIG[tempProduct.category].map((field) => (
-                                <View key={field.key} style={{ marginBottom: 10 }}>
-                                    <Text style={styles.fieldLabel}>{field.label}</Text>
-                                    {field.type === 'select' ? (
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
-                                            {field.options?.map(opt => (
-                                                <TouchableOpacity
-                                                    key={opt}
-                                                    onPress={() => setTempProduct(prev => ({
-                                                        ...prev,
-                                                        specifications: { ...prev.specifications, [field.key]: opt }
-                                                    }))}
-                                                    style={[
-                                                        styles.optionChip,
-                                                        tempProduct.specifications?.[field.key] === opt && styles.optionChipSelected
-                                                    ]}
-                                                >
-                                                    <Text style={[
-                                                        styles.optionChipText,
-                                                        tempProduct.specifications?.[field.key] === opt && styles.optionChipTextSelected
-                                                    ]}>{opt}</Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </ScrollView>
+                        {loadingCategories || isSearching ? (
+                            <ActivityIndicator color="#fff" style={{ marginTop: 20 }} />
+                        ) : (
+                            <ScrollView nestedScrollEnabled style={{ maxHeight: 400 }}>
+                                {/* Show Search Results if query exists */}
+                                {searchQuery.length > 0 ? (
+                                    searchResults.length > 0 ? (
+                                        searchResults.map(cat => (
+                                            <TouchableOpacity 
+                                                key={cat.id} 
+                                                style={styles.categoryListItem}
+                                                onPress={() => {
+                                                    // When selecting from search, we treat it as a leaf selection
+                                                    // But we should probably check if it has children? 
+                                                    // For now, let's just select it as the category.
+                                                    // Ideally, if it's not a leaf, we might want to drill down?
+                                                    // User request: "they can search category/subcategory/leaf, anything"
+                                                    // If they select "Apparel", do they mean the folder or the item?
+                                                    // Let's assume selection means "I want this specific category". 
+                                                    // But strictly, only leaves should be selectable for products usually.
+                                                    // Let's check if leaf logic is better.
+                                                    // For simplicity, let's treat any selection here as "drilling down" if it has children,
+                                                    // OR selecting if it's a leaf.
+                                                    // Actually, let's just use handleCategorySelect which handles drilling!
+                                                    handleCategorySelect(cat);
+                                                    setSearchQuery(''); // Clear search to show the view
+                                                }}
+                                            >
+                                                <View>
+                                                    <Text style={styles.categoryListText}>{cat.name}</Text>
+                                                    <Text style={{ color: '#666', fontSize: 12 }}>{cat.full_name}</Text>
+                                                </View>
+                                                <Icon name="chevron-right" size={20} color="#666" />
+                                            </TouchableOpacity>
+                                        ))
                                     ) : (
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder={field.label}
-                                            placeholderTextColor="#666"
-                                            value={tempProduct.specifications?.[field.key] || ''}
-                                            onChangeText={(text) => setTempProduct(prev => ({
-                                                ...prev,
-                                                specifications: { ...prev.specifications, [field.key]: text }
-                                            }))}
-                                        />
-                                    )}
+                                        <Text style={{ color: '#fff', textAlign: 'center', marginTop: 20 }}>No results found.</Text>
+                                    )
+                                ) : (
+                                    /* Normal Browse List */
+                                    <>
+                                        {currentCategories.map(cat => (
+                                            <TouchableOpacity 
+                                                key={cat.id} 
+                                                style={styles.categoryListItem}
+                                                onPress={() => handleCategorySelect(cat)}
+                                            >
+                                                <Text style={styles.categoryListText}>{cat.name}</Text>
+                                                <Icon name="chevron-right" size={20} color="#666" />
+                                            </TouchableOpacity>
+                                        ))}
+                                        {currentCategories.length === 0 && !loadingCategories && (
+                                            <Text style={{ color: '#fff', textAlign: 'center', marginTop: 20 }}>No categories found.</Text>
+                                        )}
+                                    </>
+                                )}
+                            </ScrollView>
+                        )}
+                    </View>
+                ) : (
+                    // PRODUCT DETAILS FORM (Leaf Category Selected)
+                    <View>
+                        {/* Updated Media Section with Variant Grouping */}
+                        <View style={styles.dynamicFormSection}>
+                            <Text style={styles.sectionHeader}>Media</Text>
+                            
+                            {/* General Media (No specific variant) */}
+                            <View style={{ marginBottom: 15 }}>
+                                <Text style={{ color: '#aaa', fontSize: 13, marginBottom: 8 }}>General / Main Images</Text>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                    <TouchableOpacity style={styles.imagePicker} onPress={() => pickMediaForVariant(null)}>
+                                        <Icon name="camera" size={24} color="#666" />
+                                        <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
+                                    </TouchableOpacity>
+                                    {(tempProduct.media || []).filter(m => m.variantTag === null).map((m, idx) => (
+                                        <View key={idx} style={styles.imagePreviewContainer}>
+                                            <Image source={{ uri: m.uri }} style={styles.imagePreview} />
+                                            <TouchableOpacity style={styles.removeImageBtn} onPress={() => {
+                                                const newMedia = (tempProduct.media || []).filter(item => item !== m);
+                                                setTempProduct({ ...tempProduct, media: newMedia });
+                                            }}>
+                                                <Icon name="x" size={12} color="#fff" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))}
+                                </ScrollView>
+                            </View>
+
+                            {/* Color Specific Media */}
+                            {getColorVariantGroup()?.options.map((opt) => (
+                                <View key={opt} style={{ marginBottom: 15 }}>
+                                    <Text style={{ color: '#aaa', fontSize: 13, marginBottom: 8 }}>{opt} Images</Text>
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                        <TouchableOpacity style={[styles.imagePicker, { borderColor: '#444' }]} onPress={() => pickMediaForVariant(opt)}>
+                                            <Icon name="camera" size={24} color="#666" />
+                                            <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>Add</Text>
+                                        </TouchableOpacity>
+                                        {(tempProduct.media || []).filter(m => m.variantTag === opt).map((m, idx) => (
+                                            <View key={idx} style={styles.imagePreviewContainer}>
+                                                <Image source={{ uri: m.uri }} style={styles.imagePreview} />
+                                                <TouchableOpacity style={styles.removeImageBtn} onPress={() => {
+                                                    const newMedia = (tempProduct.media || []).filter(item => item !== m);
+                                                    setTempProduct({ ...tempProduct, media: newMedia });
+                                                }}>
+                                                    <Icon name="x" size={12} color="#fff" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ))}
+                                    </ScrollView>
                                 </View>
                             ))}
                         </View>
-                    )}
 
-                    <View style={styles.formActions}>
-                      <TouchableOpacity style={styles.cancelButton} onPress={() => setShowProductForm(false)}>
-                        <Text style={styles.cancelButtonText}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.addButton} onPress={handleNext}>
-                        <Text style={styles.addButtonText}>{tempProduct.category === 'fashion' ? 'Next (Variants)' : 'Add Product'}</Text>
-                      </TouchableOpacity>
+                        <TextInput style={styles.input} placeholder="Title" placeholderTextColor="#666" value={tempProduct.title} onChangeText={t => setTempProduct({...tempProduct, title: t})} />
+                        <TextInput style={styles.input} placeholder="Price" placeholderTextColor="#666" keyboardType="numeric" value={tempProduct.price} onChangeText={t => setTempProduct({...tempProduct, price: t})} />
+                        <TextInput style={styles.input} placeholder="Description" placeholderTextColor="#666" multiline value={tempProduct.description} onChangeText={t => setTempProduct({...tempProduct, description: t})} />
+
+                        {/* Attribute Suggestions */}
+                        {suggestedAttributes.length > 0 && (
+                            <View style={styles.dynamicFormSection}>
+                                <Text style={styles.sectionHeader}>Suggested Attributes</Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                    {suggestedAttributes.map(attr => (
+                                        <View key={attr} style={styles.attributeTag}>
+                                            <Icon name="tag" size={12} color="#888" style={{ marginRight: 4 }} />
+                                            <Text style={{ color: '#ccc', fontSize: 12 }}>{attr}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Variants Section */}
+                        <Text style={[styles.sectionHeader, { marginTop: 20 }]}>Variants</Text>
+                        <View style={{ gap: 10 }}>
+                             <TextInput style={styles.input} placeholder="Option Name (e.g. Size)" placeholderTextColor="#666" value={newVariantName} onChangeText={setNewVariantName} />
+                             {/* Show quick picks for Option Name from suggested attributes? */}
+                             {suggestedAttributes.length > 0 && (
+                                 <ScrollView horizontal style={{ marginBottom: 10 }} showsHorizontalScrollIndicator={false}>
+                                     {suggestedAttributes.map(attr => (
+                                         <TouchableOpacity key={attr} onPress={() => setNewVariantName(attr)} style={styles.optionChip}>
+                                             <Text style={styles.optionChipText}>{attr}</Text>
+                                         </TouchableOpacity>
+                                     ))}
+                                 </ScrollView>
+                             )}
+
+                             <View style={styles.chipsInputContainer}>
+                                <TextInput 
+                                    style={[styles.input, { flex: 1, marginBottom: 0 }]} 
+                                    placeholder="Value (e.g. S, M)" 
+                                    placeholderTextColor="#666"
+                                    value={newVariantValues} 
+                                    onChangeText={setNewVariantValues}
+                                    onSubmitEditing={() => { if (newVariantValues.trim()) { setCurrentVariantTags([...currentVariantTags, newVariantValues.trim()]); setNewVariantValues(''); } }}
+                                />
+                                <TouchableOpacity style={styles.addChipBtn} onPress={() => { if (newVariantValues.trim()) { setCurrentVariantTags([...currentVariantTags, newVariantValues.trim()]); setNewVariantValues(''); } }}>
+                                    <Icon name="plus" size={20} color="#000" />
+                                </TouchableOpacity>
+                             </View>
+                             
+                             <View style={styles.chipsContainer}>
+                                  {currentVariantTags.map((tag, index) => (
+                                      <View key={index} style={styles.chip}>
+                                          <Text style={styles.chipText}>{tag}</Text>
+                                          <TouchableOpacity onPress={() => setCurrentVariantTags(currentVariantTags.filter((_, i) => i !== index))}><Icon name="x" size={14} color="#000" /></TouchableOpacity>
+                                      </View>
+                                  ))}
+                             </View>
+                             
+                             <TouchableOpacity 
+                                style={[styles.secondaryBtn, (!newVariantName || currentVariantTags.length === 0) && { opacity: 0.5 }]} 
+                                onPress={addVariantOption}
+                                disabled={!newVariantName || currentVariantTags.length === 0}
+                             >
+                                  <Text style={styles.secondaryBtnText}>+ Add Variant Group</Text>
+                             </TouchableOpacity>
+                        </View>
+                        
+                        {/* Generated Variants List */}
+                        {tempProduct.generatedVariants && tempProduct.generatedVariants.length > 0 && (
+                            <View style={{ marginTop: 15 }}>
+                                {tempProduct.generatedVariants.map((v, i) => (
+                                    <View key={i} style={styles.variantRowCompact}>
+                                        <Text style={styles.variantNameCompact}>{v.name}</Text>
+                                        <Text style={{ color: '#fff' }}>${v.price}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
+                        <View style={styles.formActions}>
+                            <TouchableOpacity style={styles.cancelButton} onPress={resetForm}><Text style={styles.cancelButtonText}>Cancel</Text></TouchableOpacity>
+                            <TouchableOpacity style={styles.addButton} onPress={addProduct}><Text style={styles.addButtonText}>Save Product</Text></TouchableOpacity>
+                        </View>
                     </View>
-                  </>
-              ) : (
-                  /* Step 3: Variants (Fashion Only) */
-                  <View>
-                      <Text style={styles.fieldLabel}>Add Variations (e.g. Size, Color)</Text>
-                      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-                          <TextInput 
-                              style={[styles.input, { flex: 1, marginBottom: 0 }]} 
-                              placeholder="Name (e.g. Size)" 
-                              placeholderTextColor="#666"
-                              value={newVariantName}
-                              onChangeText={setNewVariantName}
-                          />
-                          <TextInput 
-                              style={[styles.input, { flex: 2, marginBottom: 0 }]} 
-                              placeholder="Values (S, M, L)" 
-                              placeholderTextColor="#666"
-                              value={newVariantValues}
-                              onChangeText={setNewVariantValues}
-                          />
-                      </View>
-                      <TouchableOpacity style={styles.secondaryBtn} onPress={addVariantOption}>
-                          <Text style={styles.secondaryBtnText}>+ Add Option Group</Text>
-                      </TouchableOpacity>
-
-                      {/* List of Added Groups */}
-                      <View style={{ marginBottom: 15 }}>
-                          {tempProduct.variants?.map((v, i) => (
-                              <View key={i} style={styles.addedGroupChip}>
-                                  <Text style={styles.addedGroupText}>
-                                      <Text style={{ fontWeight: 'bold' }}>{v.name}: </Text> 
-                                      {v.options.join(', ')}
-                                  </Text>
-                              </View>
-                          ))}
-                      </View>
-
-                      <ScrollView style={{ maxHeight: 200, marginTop: 15 }}>
-                          {tempProduct.generatedVariants?.map((v, i) => (
-                              <View key={i} style={styles.variantRow}>
-                                  <Text style={styles.variantName}>{v.name}</Text>
-                                  <TextInput 
-                                    style={styles.variantInput} 
-                                    value={v.price} 
-                                    placeholder="Price"
-                                    placeholderTextColor="#555"
-                                    onChangeText={(tx) => {
-                                        const updated = [...(tempProduct.generatedVariants || [])];
-                                        updated[i].price = tx;
-                                        setTempProduct({...tempProduct, generatedVariants: updated});
-                                    }}
-                                  />
-                                  <TextInput 
-                                    style={styles.variantInput} 
-                                    value={v.stock} 
-                                    placeholder="Stock"
-                                    placeholderTextColor="#555"
-                                    onChangeText={(tx) => {
-                                        const updated = [...(tempProduct.generatedVariants || [])];
-                                        updated[i].stock = tx;
-                                        setTempProduct({...tempProduct, generatedVariants: updated});
-                                    }}
-                                  />
-                              </View>
-                          ))}
-                      </ScrollView>
-
-                      <View style={styles.formActions}>
-                        <TouchableOpacity style={styles.addButton} onPress={addProduct}>
-                            <Text style={styles.addButtonText}>Finish & Add</Text>
-                        </TouchableOpacity>
-                      </View>
-                  </View>
-              )}
+                )}
             </View>
-          ) : (
-            <TouchableOpacity style={styles.addProductBtn} onPress={() => { setShowProductForm(true); setStep(1); }}>
+        ) : (
+            <TouchableOpacity style={styles.addProductBtn} onPress={() => setShowProductForm(true)}>
               <Icon name="plus" size={20} color="#000" />
               <Text style={styles.addProductText}>Add Product</Text>
             </TouchableOpacity>
-          )}
-
+        )}
         <View style={{ height: 100 }} />
       </ScrollView>
 
       {/* Footer */}
       <View style={styles.footer}>
-        <TouchableOpacity 
-            style={[styles.submitButton, uploading && { opacity: 0.5 }]} 
-            onPress={handleSubmit}
-            disabled={uploading}
-        >
-          {uploading ? (
-             <ActivityIndicator color="#000" />
-          ) : (
-             <Text style={styles.submitButtonText}>Post Video</Text>
-          )}
+        <TouchableOpacity style={[styles.submitButton, (uploading || isCompressing) && { opacity: 0.5 }]} onPress={handleSubmit} disabled={uploading || isCompressing}>
+          {uploading ? <ActivityIndicator color="#000" /> : <Text style={styles.submitButtonText}>Post Video</Text>}
         </TouchableOpacity>
       </View>
     </>
   );
 }
 
-
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  videoPlaceholder: {
-    height: 300,
-    backgroundColor: '#111',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  videoSelected: {
-    width: '100%',
-    height: '100%',
-  },
-  videoPreview: {
-    width: '100%',
-    height: '100%',
-  },
-  changeOverlay: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    padding: 8,
-    borderRadius: 20,
-  },
-  placeholderText: {
-    color: '#666',
-    marginTop: 10,
-  },
-  captionInput: {
-    backgroundColor: '#111',
-    color: '#fff',
-    padding: 15,
-    fontSize: 16,
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  sectionTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    margin: 20,
-    marginBottom: 10,
-  },
-  productCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#111',
-    marginHorizontal: 20,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: 10,
-  },
-  productThumb: {
-    width: 50,
-    height: 50,
-    borderRadius: 5,
-    marginRight: 10,
-  },
-  productTitle: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  productPrice: {
-    color: '#aaa',
-  },
-  formCard: {
-    backgroundColor: '#111',
-    margin: 20,
-    padding: 20,
-    borderRadius: 10,
-  },
-  formTitle: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 15,
-  },
-  imagePicker: {
-    width: 80,
-    height: 80,
-    backgroundColor: '#222',
-    borderRadius: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  imagePreview: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 5,
-  },
-  imagePlaceholder: {
-    alignItems: 'center',
-  },
-  input: {
-    backgroundColor: '#222',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 5,
-    marginBottom: 10,
-  },
-  formActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 10,
-  },
-  cancelButton: {
-    padding: 10,
-    marginRight: 10,
-  },
-  cancelButtonText: {
-    color: '#888',
-  },
-  addButton: {
-    backgroundColor: '#fff',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 5,
-  },
-  addButtonText: {
-    color: '#000',
-    fontWeight: 'bold',
-  },
-  addProductBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-    margin: 20,
-    padding: 15,
-    borderRadius: 10,
-  },
-  addProductText: {
-    color: '#000',
-    fontWeight: 'bold',
-    marginLeft: 10,
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 20,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-  },
-  submitButton: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 30,
-    alignItems: 'center',
-  },
-  submitButtonText: {
-    color: '#000',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  label: {
-      color: '#fff',
-      marginBottom: 10,
-      fontWeight: '600'
-  },
-  categoryContainer: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginBottom: 15,
-      gap: 8,
-  },
-  categoryChip: {
-      paddingVertical: 8,
-      paddingHorizontal: 16,
-      borderRadius: 20,
-      backgroundColor: '#222',
-      borderWidth: 1,
-      borderColor: '#333',
-  },
-  categoryChipSelected: {
-      backgroundColor: '#fff',
-      borderColor: '#fff',
-  },
-  categoryChipText: {
-      color: '#888',
-      fontSize: 14,
-  },
-  categoryChipTextSelected: {
-      color: '#000',
-      fontWeight: 'bold',
-  },
-  imagePreviewContainer: {
-    marginRight: 10,
-    width: 80,
-    height: 80,
-    position: 'relative',
-  },
-  removeImageBtn: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    backgroundColor: 'red',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  categoryGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 15,
-      justifyContent: 'space-between',
-  },
-  categoryCard: {
-      width: '47%',
-      backgroundColor: '#222',
-      borderRadius: 12,
-      padding: 15,
-      alignItems: 'center',
-      marginBottom: 0,
-      borderWidth: 1,
-      borderColor: '#333',
-  },
-  categoryIconCircle: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      backgroundColor: '#fff',
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: 10,
-  },
-  categoryCardText: {
-      color: '#fff',
-      fontSize: 14,
-      fontWeight: '600',
-  },
-  formHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 20,
-  },
-  selectedCategoryChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#222',
-      padding: 10,
-      borderRadius: 8,
-      marginBottom: 15,
-      borderWidth: 1,
-      borderColor: '#444',
-  },
-  dynamicFormSection: {
-      marginTop: 10,
-      marginBottom: 20,
-      padding: 10,
-      backgroundColor: '#1a1a1a',
-      borderRadius: 8,
-  },
-  sectionHeader: {
-      color: '#fff',
-      fontSize: 14,
-      fontWeight: 'bold',
-      marginBottom: 10,
-      textTransform: 'uppercase',
-      letterSpacing: 1,
-  },
-  fieldLabel: {
-      color: '#bbb',
-      marginBottom: 5,
-      fontSize: 12,
-  },
-  optionChip: {
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      backgroundColor: '#333',
-      borderRadius: 15,
-      marginRight: 8,
-      borderWidth: 1,
-      borderColor: 'transparent',
-  },
-  optionChipSelected: {
-      backgroundColor: '#fff',
-      borderColor: '#fff',
-  },
-  optionChipText: {
-      color: '#bbb',
-      fontSize: 12,
-  },
-  optionChipTextSelected: {
-      fontWeight: 'bold',
-  },
-  addedGroupChip: {
-      backgroundColor: '#222',
-      padding: 8,
-      borderRadius: 5,
-      marginBottom: 5,
-      borderLeftWidth: 3,
-      borderLeftColor: '#fff',
-  },
-  addedGroupText: {
-      color: '#aaa',
-      fontSize: 12,
-  },
-  secondaryBtn: {
-      padding: 10,
-      backgroundColor: '#333',
-      borderRadius: 5,
-      alignItems: 'center',
-      marginBottom: 10,
-  },
-  secondaryBtnText: {
-      color: '#fff',
-      fontSize: 12,
-      fontWeight: 'bold',
-  },
-  variantRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingVertical: 8,
-      borderBottomWidth: 1,
-      borderBottomColor: '#222',
-  },
-  variantName: {
-      color: '#ddd',
-      flex: 2,
-      fontSize: 14,
-  },
-  variantInput: {
-      backgroundColor: '#111',
-      color: '#fff',
-      padding: 5,
-      width: 60,
-      borderRadius: 4,
-      textAlign: 'center',
-      marginLeft: 5,
-      fontSize: 12,
-  },
+  container: { flex: 1, backgroundColor: '#000' },
+  videoPlaceholder: { height: 300, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  videoSelected: { width: '100%', height: '100%' },
+  videoPreview: { width: '100%', height: '100%' },
+  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  changeOverlay: { position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', padding: 8, borderRadius: 20 },
+  placeholderText: { color: '#666', marginTop: 10 },
+  captionInput: { color: '#fff', fontSize: 16, padding: 15, minHeight: 80 },
+  sectionTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', margin: 15 },
+  productCard: { flexDirection: 'row', backgroundColor: '#1a1a1a', marginHorizontal: 15, marginBottom: 10, padding: 10, borderRadius: 8, alignItems: 'center' },
+  productThumb: { width: 50, height: 50, borderRadius: 4, marginRight: 10 },
+  productTitle: { color: '#fff', fontWeight: 'bold' },
+  productPrice: { color: '#bbb' },
+  addProductBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', margin: 15, padding: 15, borderRadius: 8 },
+  addProductText: { fontWeight: 'bold', marginLeft: 10 },
+  
+  formCard: { backgroundColor: '#1a1a1a', margin: 15, padding: 15, borderRadius: 12 },
+  formHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#333', paddingBottom: 10 },
+  formTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  
+  categoryListItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
+  categoryListText: { color: '#fff', fontSize: 16 },
+  
+  imagePicker: { width: 60, height: 60, borderRadius: 8, borderWidth: 1, borderColor: '#333', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  imagePreviewContainer: { width: 60, height: 60, marginRight: 10, position: 'relative' },
+  imagePreview: { width: '100%', height: '100%', borderRadius: 8 },
+  removeImageBtn: { position: 'absolute', top: -5, right: -5, backgroundColor: 'red', borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center' },
+  
+  input: { backgroundColor: '#222', color: '#fff', padding: 12, borderRadius: 8, marginBottom: 10 },
+  dynamicFormSection: { marginTop: 15, marginBottom: 15 },
+  sectionHeader: { color: '#888', fontSize: 12, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 },
+  attributeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  
+  chipsInputContainer: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  addChipBtn: { backgroundColor: '#fff', width: 44, height: 44, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  chipsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  chip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 15 },
+  chipText: { marginRight: 5, fontWeight: 'bold' },
+  optionChip: { backgroundColor: '#333', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, marginRight: 8 },
+  optionChipText: { color: '#fff' },
+  secondaryBtn: { alignItems: 'center', padding: 10, borderWidth: 1, borderColor: '#666', borderRadius: 8, marginTop: 5 },
+  secondaryBtnText: { color: '#ccc' },
+  addedGroupChip: { backgroundColor: '#2a2a2a', padding: 10, borderRadius: 8, marginBottom: 5 },
+  
+  variantRowCompact: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#333' },
+  variantNameCompact: { color: '#ddd' },
+  
+  formActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  cancelButton: { flex: 1, padding: 15, borderRadius: 8, backgroundColor: '#333', alignItems: 'center' },
+  cancelButtonText: { color: '#fff' },
+  addButton: { flex: 2, padding: 15, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center' },
+  addButtonText: { fontWeight: 'bold' },
+  
+  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20, backgroundColor: 'rgba(0,0,0,0.9)' },
+  submitButton: { backgroundColor: '#fff', padding: 15, borderRadius: 30, alignItems: 'center' },
+  submitButtonText: { fontWeight: 'bold', fontSize: 16 },
+  
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#222', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, marginBottom: 10 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 16, height: '100%' }, // Ensure high enough
 });

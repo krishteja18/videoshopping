@@ -30,22 +30,44 @@ export default function ProductDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [isLiked, setIsLiked] = useState(false);
-  const [selectedSize, setSelectedSize] = useState<string | null>('M');
-  const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  // Mock Variants
-  const sizes = ['S', 'M', 'L', 'XL', 'XXL'];
-  const colors = [
-      { name: 'Black', code: '#000000' },
-      { name: 'White', code: '#FFFFFF' },
-      { name: 'Navy', code: '#000080' },
-      { name: 'Beige', code: '#F5F5DC' }
-  ];
+  // Dynamic Variants State
+  const [variantGroups, setVariantGroups] = useState<{ name: string; values: string[] }[]>([]);
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
 
   useEffect(() => {
-      if (colors.length > 0) setSelectedColor(colors[0].name);
-  }, []);
+    if (product && product.variants && product.variants.length > 0) {
+        // 1. Extract all unique keys from variant_options
+        const keys = new Set<string>();
+        product.variants.forEach((v: any) => {
+            if (v.variant_options) {
+                Object.keys(v.variant_options).forEach(k => keys.add(k));
+            }
+        });
+
+        // 2. For each key, extract unique values
+        const groups: { name: string; values: string[] }[] = [];
+        const initialSelection: Record<string, string> = {};
+
+        keys.forEach(key => {
+            const values = new Set<string>();
+            product.variants.forEach((v: any) => {
+                if (v.variant_options && v.variant_options[key]) {
+                    values.add(v.variant_options[key]);
+                }
+            });
+            if (values.size > 0) {
+                const valuesArr = Array.from(values);
+                groups.push({ name: key, values: valuesArr });
+                initialSelection[key] = valuesArr[0]; // Default select 1st
+            }
+        });
+
+        setVariantGroups(groups);
+        setSelectedOptions(initialSelection);
+    }
+  }, [product]);
   
   const mainImageRef = React.useRef<FlatList>(null);
 
@@ -96,13 +118,64 @@ export default function ProductDetailScreen() {
         .single();
         
       if (error) throw error;
-      setProduct(data);
+      
+      // Fetch Variants
+      const { data: variants } = await supabase
+          .from('product_variants')
+          .select('*')
+          .eq('product_id', id);
+
+      // Fetch Media
+      const { data: media } = await supabase
+          .from('product_media')
+          .select('*')
+          .eq('product_id', id)
+          .order('position');
+
+      setProduct({ ...data, variants, media });
+      
+      // Initial Image Setup
+      if (media && media.length > 0) {
+           // Default to showing all or just non-variant specific? 
+           // For now, let's just default to all, filtering happens in render or effect
+      }
+      
     } catch (error) {
       console.error('Error fetching product:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  const getFilteredImages = () => {
+      if (!product || !product.media || product.media.length === 0) {
+          // Fallback to legacy images array if no product_media
+          return product?.images || (product?.image_url ? [product.image_url] : []);
+      }
+
+      // Find currently selected color
+      // We need to know which group corresponds to "Color"
+      // In upload, we hardcoded group name as "Color" or checked variant name.
+      // Here, let's look for selectedOptions where key is "Color" (case insensitive)
+      
+      const colorKey = Object.keys(selectedOptions).find(k => k.toLowerCase() === 'color' || k.toLowerCase() === 'colour');
+      const selectedColor = colorKey ? selectedOptions[colorKey] : null;
+
+      if (selectedColor) {
+          const filtered = product.media.filter((m: any) => m.variant_group_value === selectedColor);
+          if (filtered.length > 0) return filtered.map((m: any) => m.url);
+          
+          // If no specific images for this color, maybe show general images (null tag)?
+          const general = product.media.filter((m: any) => m.variant_group_value === null);
+          return general.length > 0 ? general.map((m: any) => m.url) : product.media.map((m: any) => m.url);
+      }
+
+      // No color selected or no color option? Show everything or general?
+      // Usually show everything or general. Let's show everything sorted by position.
+      return product.media.map((m: any) => m.url);
+  };
+
+  const currentImages = getFilteredImages();
 
   const handleAddToCart = async () => {
     // Implement Add to Cart logic here
@@ -138,7 +211,7 @@ export default function ProductDetailScreen() {
         <View style={styles.imageContainer}>
           <FlatList
             ref={mainImageRef}
-            data={product.images && product.images.length > 0 ? product.images : [product.image_url]}
+            data={currentImages}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
@@ -161,9 +234,9 @@ export default function ProductDetailScreen() {
           />
 
           {/* Pagination Dots */}
-          {(product.images && product.images.length > 1) && (
+          {(currentImages.length > 1) && (
               <View style={styles.paginationContainer}>
-                  {product.images.map((_: any, idx: number) => (
+                  {currentImages.map((_: any, idx: number) => (
                       <View 
                         key={idx} 
                         style={[
@@ -198,14 +271,10 @@ export default function ProductDetailScreen() {
 
           <View style={styles.titleRow}>
             <View style={{ flex: 1 }}>
-                <Text style={styles.brandText}>{product.category || 'Trending'}</Text>
+                <Text style={styles.brandText}>
+                    {product.category ? product.category.split(' > ').pop() : 'Trending'}
+                </Text>
                 <Text style={styles.productTitle}>{product.title}</Text>
-            </View>
-            <View style={styles.priceTag}>
-               <Text style={styles.priceText}>₹{product.price}</Text>
-               {product.original_price && (
-                   <Text style={styles.oldPrice}>₹{product.original_price}</Text>
-               )}
             </View>
           </View>
 
@@ -223,52 +292,29 @@ export default function ProductDetailScreen() {
 
           <View style={styles.divider} />
 
-           {/* Color Selection */}
-           <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Color: {selectedColor}</Text>
-              <View style={styles.colorRow}>
-                  {colors.map((color) => (
-                      <TouchableOpacity 
-                        key={color.name}
-                        onPress={() => setSelectedColor(color.name)}
-                        style={[
-                            styles.colorOption,
-                            selectedColor === color.name && styles.colorOptionSelected,
-                            { backgroundColor: color.code }
-                        ]}
-                      >
-                          {selectedColor === color.name && color.name === 'White' && <View style={styles.colorCheckBlack} />}
-                      </TouchableOpacity>
-                  ))}
-              </View>
-           </View>
-
-           {/* Size Selection */}
-           <View style={styles.section}>
-              <View style={styles.sizeHeader}>
-                  <Text style={styles.sectionTitle}>Size</Text>
-                  <TouchableOpacity>
-                      <Text style={styles.sizeGuideText}>Size Guide</Text>
-                  </TouchableOpacity>
-              </View>
-              <View style={styles.sizeRow}>
-                  {sizes.map((size) => (
-                      <TouchableOpacity 
-                        key={size}
-                        onPress={() => setSelectedSize(size)}
-                        style={[
-                            styles.sizeOption,
-                            selectedSize === size && styles.sizeOptionSelected
-                        ]}
-                      >
-                          <Text style={[
-                              styles.sizeText,
-                              selectedSize === size && styles.sizeTextSelected
-                          ]}>{size}</Text>
-                      </TouchableOpacity>
-                  ))}
-              </View>
-           </View>
+           {/* Dynamic Variant Selection */}
+           {variantGroups.map((group) => (
+               <View key={group.name} style={styles.section}>
+                   <Text style={styles.sectionTitle}>{group.name}: {selectedOptions[group.name]}</Text>
+                   <View style={styles.sizeRow}> 
+                       {group.values.map((val) => (
+                           <TouchableOpacity 
+                               key={val}
+                               onPress={() => setSelectedOptions({ ...selectedOptions, [group.name]: val })}
+                               style={[
+                                   styles.sizeOption, // Using size style for all for simplicity, can differentiate if Color
+                                   selectedOptions[group.name] === val && styles.sizeOptionSelected
+                               ]}
+                           >
+                               <Text style={[
+                                   styles.sizeText,
+                                   selectedOptions[group.name] === val && styles.sizeTextSelected
+                               ]}>{val}</Text>
+                           </TouchableOpacity>
+                       ))}
+                   </View>
+               </View>
+           ))}
 
           {/* Description */}
           <View style={styles.section}>
@@ -296,12 +342,21 @@ export default function ProductDetailScreen() {
           <View style={styles.section}>
               <Text style={styles.sectionTitle}>Specifications</Text>
               <View style={styles.specsTable}>
-                  {mockSpecs.map((spec, index) => (
-                      <View key={index} style={[styles.specRow, index === mockSpecs.length - 1 && { borderBottomWidth: 0 }]}>
-                          <Text style={styles.specLabel}>{spec.label}</Text>
-                          <Text style={styles.specValue}>{spec.value}</Text>
-                      </View>
-                  ))}
+                  {product.specifications && Object.keys(product.specifications).length > 0 ? (
+                      Object.entries(product.specifications).map(([key, value], index, arr) => (
+                          <View key={key} style={[styles.specRow, index === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                              <Text style={styles.specLabel}>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</Text>
+                              <Text style={styles.specValue}>{String(value)}</Text>
+                          </View>
+                      ))
+                  ) : (
+                       mockSpecs.map((spec, index) => (
+                          <View key={index} style={[styles.specRow, index === mockSpecs.length - 1 && { borderBottomWidth: 0 }]}>
+                              <Text style={styles.specLabel}>{spec.label}</Text>
+                              <Text style={styles.specValue}>{spec.value}</Text>
+                          </View>
+                      ))
+                  )}
               </View>
           </View>
 
