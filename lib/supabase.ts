@@ -14,14 +14,3 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 })
-
-// For server-side operations (keep this secure)
-export const supabaseAdmin = createClient(
-  supabaseUrl,
-  'sb_secret_NVFdEIv6_tt1bb8hGbnuPw_G29iFV85',
-  {
-    auth: {
-      persistSession: false,
-    },
-  }
-)

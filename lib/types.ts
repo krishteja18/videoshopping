@@ -43,6 +43,8 @@ export interface Database {
           thumbnail_url: string | null
           description: string | null
           likes_count: number
+          comments_count: number
+          shares_count: number
           created_at: string
         }
         Insert: {
@@ -52,6 +54,8 @@ export interface Database {
           thumbnail_url?: string | null
           description?: string | null
           likes_count?: number
+          comments_count?: number
+          shares_count?: number
           created_at?: string
         }
         Update: {
@@ -61,6 +65,8 @@ export interface Database {
           thumbnail_url?: string | null
           description?: string | null
           likes_count?: number
+          comments_count?: number
+          shares_count?: number
           created_at?: string
         }
       }
@@ -167,6 +173,69 @@ export interface Database {
           category_id?: string | null
           specifications?: Json | null
           has_variants?: boolean | null
+        }
+      }
+      likes: {
+        Row: {
+          user_id: string
+          video_id: string
+          created_at: string
+        }
+        Insert: {
+          user_id: string
+          video_id: string
+          created_at?: string
+        }
+        Update: {
+          user_id?: string
+          video_id?: string
+          created_at?: string
+        }
+      }
+      comments: {
+        Row: {
+          id: string
+          user_id: string
+          video_id: string
+          text: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          video_id: string
+          text: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          video_id?: string
+          text?: string
+          created_at?: string
+        }
+      }
+      shares: {
+        Row: {
+          id: string
+          user_id: string | null
+          video_id: string
+          platform: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          video_id: string
+          platform?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          video_id?: string
+          platform?: string | null
+          created_at?: string
         }
       }
       video_products: {

@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     
     const publicUrl = R2_PUBLIC_DOMAIN 
         ? `${R2_PUBLIC_DOMAIN}/${key}` 
-        : `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET_NAME}/${key}`;
+        : `https://pub-${R2_ACCOUNT_ID}.r2.dev/${key}`;
 
     return new Response(
       JSON.stringify({ 

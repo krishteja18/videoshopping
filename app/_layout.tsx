@@ -102,6 +102,8 @@ import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import CustomSplashScreen from '@/components/SplashScreenModern';
+import AlertBanner from '@/components/ui/AlertBanner';
+import { AlertProvider } from '@/context/AlertContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 
@@ -178,6 +180,7 @@ function Layout() {
         <Stack.Screen name="product" options={{ headerShown: false }} />
         <Stack.Screen name="+not-found" />
       </Stack>
+      <AlertBanner />
       <StatusBar style="auto" />
     </ThemeProvider>
   );
@@ -188,7 +191,9 @@ export default function RootLayout() {
   console.log('🏠 RootLayout render');
   return (
     <AuthProvider>
-      <Layout />
+      <AlertProvider>
+        <Layout />
+      </AlertProvider>
     </AuthProvider>
   );
 }

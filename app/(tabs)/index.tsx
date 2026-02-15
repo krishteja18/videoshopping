@@ -1,4 +1,5 @@
 import ProfileView from '@/components/ProfileView';
+import { CommentSheet } from '@/components/ui/CommentSheet';
 import { supabase } from '@/lib/supabase';
 import { useSearchStore, useUserStore } from '@/store/useStore';
 import { FontAwesome } from '@expo/vector-icons';
@@ -10,7 +11,9 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, Share, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 
@@ -131,7 +134,7 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
   );
 };
 
-const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio, onVideoFinished }: any) => {
+const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio, onVideoFinished, hideOverlay }: any) => {
   const [progress, setProgress] = useState(0);
   const isScrubbing = useRef(false);
   const duration = useRef(0);
@@ -139,6 +142,28 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 
   // Memoize source to prevent unnecessary reloads
   const videoSource = useMemo(() => ({ uri: item.videoUrl }), [item.videoUrl]);
+
+  // Heart Animation
+  const heartScale = useSharedValue(0);
+  
+  const heartAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: Math.max(heartScale.value, 0) }],
+    opacity: heartScale.value,
+  }));
+
+  const handleDoubleTapLike = () => {
+    // Animate heart
+    heartScale.value = withSpring(1, undefined, (finished) => {
+      if (finished) {
+        heartScale.value = withDelay(500, withTiming(0));
+      }
+    });
+    
+    // Trigger like if not already liked (or simply pass the action)
+    if (!item.isLiked) {
+        item.onLike();
+    }
+  };
 
   useEffect(() => {
     if (index === currentIndex && localVideoRef.current) {
@@ -201,6 +226,19 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
     })
   ).current;
 
+  const toggleMute = useCallback(() => {
+    setMuted((m: boolean) => !m);
+  }, []);
+
+  const lastTap = useRef<number>(0);
+  const singleTapTimeout = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+        if (singleTapTimeout.current) clearTimeout(singleTapTimeout.current);
+    }
+  }, []);
+
   return (
     <View style={styles.videoContainer}>
       <Video
@@ -220,24 +258,50 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
         onError={(e) => console.log('Video error:', e)}
       />
 
-      <Pressable
+
+      {!hideOverlay && (
+      <>
+      <Pressable 
         style={styles.videoTouchLayer}
-        onPress={() => setMuted((m: boolean) => !m)}
-        onLongPress={() => setMuted(false)}
+        onPress={() => {
+          const now = Date.now();
+          const DOUBLE_PRESS_DELAY = 400;
+          if (now - lastTap.current < DOUBLE_PRESS_DELAY) {
+            console.log('Double tap detected!');
+            if (singleTapTimeout.current) {
+                clearTimeout(singleTapTimeout.current);
+                singleTapTimeout.current = null;
+            }
+            handleDoubleTapLike();
+            lastTap.current = 0; // Reset
+          } else {
+            lastTap.current = now;
+            singleTapTimeout.current = setTimeout(() => {
+                toggleMute();
+                singleTapTimeout.current = null;
+                lastTap.current = 0; // Reset after single tap action too? No, keep it.
+            }, DOUBLE_PRESS_DELAY);
+          }
+        }}
       >
-        {!muted && (
-           <View style={styles.muteBadge}>
-             <Octicons name="unmute" size={20} color="#fff" />
-           </View>
-        )}
+          {!muted && (
+             <View style={styles.muteBadge}>
+               <Octicons name="unmute" size={20} color="#fff" />
+             </View>
+          )}
+          
+          <Animated.View style={[styles.heartOverlay, heartAnimatedStyle]}>
+            <Octicons name="heart-fill" size={80} color="#e31b23" />
+          </Animated.View>
       </Pressable>
 
       <LinearGradient
         colors={['transparent', 'rgba(0,0,0,0.8)']}
         style={styles.gradientOverlay}
+        pointerEvents="none"
       />
 
-      <View style={styles.rightActions}>
+      <View style={styles.rightActions} pointerEvents="box-none">
 
 
         <TouchableOpacity style={styles.actionButton}>
@@ -245,23 +309,27 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
           <Text style={styles.actionLabel}>Call</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton}>
-          <Octicons name="heart" size={24} color="#fff" />
+        <TouchableOpacity style={styles.actionButton} onPress={item.onLike}>
+          <Octicons 
+            name={item.isLiked ? "heart-fill" : "heart"} 
+            size={24} 
+            color={item.isLiked ? "#e31b23" : "#fff"} 
+          />
           <Text style={styles.actionCount}>{item.likes}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton}>
+        <TouchableOpacity style={styles.actionButton} onPress={item.onComment}>
           <Icon name="message-circle" size={24} color="#fff" />
           <Text style={styles.actionCount}>{item.comments}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton}>
+        <TouchableOpacity style={styles.actionButton} onPress={item.onShare}>
           <Octicons name="paper-airplane" size={24} color="#fff" />
-          <Text style={styles.actionCount}>89</Text>
+          <Text style={styles.actionCount}>{item.shares}</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.bottomInfoContainer}>
+      <View style={styles.bottomInfoContainer} pointerEvents="box-none">
         <View style={styles.userInfoContainer}>
           <View style={styles.userRow}>
             <Image source={{ uri: item.avatar || 'https://via.placeholder.com/50' }} style={styles.userAvatarSmall} />
@@ -291,6 +359,8 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
       >
         <View style={[styles.progressBarActive, { width: `${progress * 100}%` }]} />
       </View>
+      </>
+      )}
     </View>
   );
 };
@@ -309,8 +379,33 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isFilteredMode, setIsFilteredMode] = useState(false);
 
+  // Interaction State
+  const [showComments, setShowComments] = useState(false);
+  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
+
   const videoRefs = useRef<(Video | null)[]>([]);
   const flatListRef = useRef<FlatList>(null);
+
+  // Animation values for Instagram-style video card
+  const containerHeight = useSharedValue(height);
+  const containerMarginH = useSharedValue(0);
+  const containerMarginTop = useSharedValue(0);
+  const containerBorderRadius = useSharedValue(0);
+
+  useEffect(() => {
+    containerHeight.value = withTiming(showComments ? height * 0.42 : height, { duration: 300 });
+    containerMarginH.value = withTiming(showComments ? 48 : 0, { duration: 300 });
+    containerMarginTop.value = withTiming(showComments ? 8 : 0, { duration: 300 });
+    containerBorderRadius.value = withTiming(showComments ? 24 : 0, { duration: 300 });
+  }, [showComments]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    height: containerHeight.value,
+    marginHorizontal: containerMarginH.value,
+    marginTop: containerMarginTop.value,
+    borderRadius: containerBorderRadius.value,
+    overflow: 'hidden' as const,
+  }));
 
   const handleVideoFinished = (finishedIndex: number) => {
     if (finishedIndex < videos.length - 1) {
@@ -327,14 +422,18 @@ export default function HomeScreen() {
 
   const fetchVideos = async () => {
     try {
-      const { data, error } = await supabase
+      // 1. Fetch Videos with Counts
+      const { data: videosData, error } = await supabase
         .from('videos')
         .select(`
           id,
           video_url,
           description,
           created_at,
-          seller:profiles (
+          likes_count,
+          comments_count,
+          shares_count,
+          seller:profiles!videos_seller_id_fkey (
             username,
             full_name,
             avatar_url
@@ -344,6 +443,7 @@ export default function HomeScreen() {
               id,
               title,
               price,
+              original_price,
               image_url
             )
           )
@@ -352,13 +452,27 @@ export default function HomeScreen() {
 
       if (error) throw error;
 
-      if (data && data.length > 0) {
-        const formattedVideos = data.map((v: any) => ({
+      // 2. Fetch User Likes to determine 'isLiked' state
+      const { data: { user } } = await supabase.auth.getUser();
+      const likedVideoIds = new Set();
+      if (user) {
+        const { data: likesData } = await supabase
+          .from('likes')
+          .select('video_id')
+          .eq('user_id', user.id);
+        
+        likesData?.forEach(like => likedVideoIds.add(like.video_id));
+      }
+
+      if (videosData && videosData.length > 0) {
+        const formattedVideos = videosData.map((v: any) => ({
           id: v.id,
           username: v.seller?.username ? `@${v.seller.username}` : (v.seller?.full_name || 'Unknown'),
           description: v.description,
-          likes: '0', 
-          comments: '0', 
+          likes: v.likes_count || 0,
+          comments: v.comments_count || 0,
+          shares: v.shares_count || 0,
+          isLiked: likedVideoIds.has(v.id),
           videoUrl: v.video_url,
           avatar: v.seller?.avatar_url,
           products: v.video_products.map((vp: any) => ({
@@ -366,7 +480,7 @@ export default function HomeScreen() {
             title: vp.products.title,
             price: `₹${vp.products.price}`,
             originalPrice: vp.products.original_price ? `₹${vp.products.original_price}` : undefined,
-            rating: '4.8 (1.2k)', // Default rating since not in DB
+            rating: '4.8 (1.2k)',
             image: vp.products.image_url
           }))
         }));
@@ -380,6 +494,56 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const handleLike = async (videoId: string, currentLiked: boolean) => {
+    // Optimistic Update
+    setVideos(prev => prev.map(v => {
+      if (v.id === videoId) {
+        return {
+          ...v,
+          isLiked: !currentLiked,
+          likes: currentLiked ? v.likes - 1 : v.likes + 1
+        };
+      }
+      return v;
+    }));
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    if (currentLiked) {
+      // Unlike
+      await supabase.from('likes').delete().eq('user_id', user.id).eq('video_id', videoId);
+    } else {
+      // Like
+      await supabase.from('likes').insert({ user_id: user.id, video_id: videoId });
+    }
+  };
+
+  const handleShare = async (video: any) => {
+    try {
+      const result = await Share.share({
+        message: `Check out this video on SwipeKart! ${video.description} \n\n${video.videoUrl}`,
+        url: video.videoUrl, // iOS
+        title: 'SwipeKart Video' // Android
+      });
+      
+      if (result.action === Share.sharedAction) {
+         const { data: { user } } = await supabase.auth.getUser();
+         if (user) {
+             supabase.from('shares').insert({
+                 user_id: user.id,
+                 video_id: video.id,
+                 platform: 'native'
+             });
+             // Optimistic update
+             setVideos(prev => prev.map(v => v.id === video.id ? { ...v, shares: (v.shares || 0) + 1 } : v));
+         }
+      }
+    } catch (error) {
+      console.error(error);
     }
   };
 
@@ -473,19 +637,30 @@ export default function HomeScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {/* Search bar removed - now accessible via bottom nav */}
-      {activeTab === 'profile' ? (
-        <ProfileView onSignOut={handleSignOut} />
-      ) : (
-      <FlatList
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        {/* Search bar removed - now accessible via bottom nav */}
+        {activeTab === 'profile' ? (
+          <ProfileView onSignOut={handleSignOut} />
+        ) : (
+        <View style={{ flex: 1 }}>
+        <Animated.View style={animatedStyle}>
+        <FlatList
         ref={flatListRef}
         data={videos}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item, index }) => (
           <VideoItem 
-            item={item} 
+            item={{
+              ...item,
+              onLike: () => handleLike(item.id, item.isLiked),
+              onShare: () => handleShare(item),
+              onComment: () => {
+                setActiveVideoId(item.id);
+                setShowComments(true);
+              }
+            }}   
             index={index} 
             currentIndex={currentIndex} 
             muted={muted} 
@@ -493,6 +668,7 @@ export default function HomeScreen() {
             videoRefs={videoRefs}
             ensureAudio={ensureAudio}
             onVideoFinished={handleVideoFinished}
+            hideOverlay={showComments}
           />
         )}
         pagingEnabled
@@ -521,9 +697,25 @@ export default function HomeScreen() {
           index,
         })}
       />
+      </Animated.View>
+
+      {/* Inline Comment Sheet - renders below video card */}
+      <CommentSheet 
+        visible={showComments} 
+        videoId={activeVideoId} 
+        onClose={() => setShowComments(false)}
+        onCommentAdded={() => {
+           if (activeVideoId) {
+             setVideos(prev => prev.map(v => v.id === activeVideoId ? { ...v, comments: (v.comments || 0) + 1 } : v));
+           }
+        }}
+        inline={true}
+      />
+      </View>
       )}
 
       {/* Bottom Navigation */}
+      {!showComments && (
       <View style={styles.bottomNavContainer}>
         <View style={styles.bottomNav}>
           <TouchableOpacity 
@@ -536,27 +728,37 @@ export default function HomeScreen() {
               }
             }}
           >
-            <Octicons name="home" size={24} color={activeTab === 'home' ? '#000' : '#999'} />
+            <Octicons name="home" size={24} color="#000" />
             <Text style={[styles.navLabel, activeTab === 'home' ? styles.navLabelActive : styles.navLabelInactive]}>Home</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => router.push('/search' as any)}>
-            <Octicons name="search" size={24} color={'#999'} />
+            <Octicons name={activeTab === 'search' ? "search" : "search"} size={24} color={'#000'} />
              <Text style={[styles.navLabel, styles.navLabelInactive]}>Search</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.createButton} onPress={() => setActiveTab('create')}>
             <Octicons name="plus" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('favorites')}>
-            <Octicons name="heart" size={24} color={activeTab === 'favorites' ? '#000' : '#999'} />
+            {activeTab === 'favorites' ? (
+               <Octicons name="heart-fill" size={24} color="#000" />
+            ) : (
+               <Octicons name="heart" size={24} color="#000" />
+            )}
              <Text style={[styles.navLabel, activeTab === 'favorites' ? styles.navLabelActive : styles.navLabelInactive]}>Favorites</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('profile')}>
-            <Octicons name="person" size={24} color={activeTab === 'profile' ? '#000' : '#999'} />
+            {activeTab === 'profile' ? (
+               <Octicons name="person-fill" size={24} color="#000" />
+            ) : (
+               <Octicons name="person" size={24} color="#000" />
+            )}
              <Text style={[styles.navLabel, activeTab === 'profile' ? styles.navLabelActive : styles.navLabelInactive]}>Profile</Text>
           </TouchableOpacity>
         </View>
       </View>
+      )}
     </SafeAreaView>
+  </GestureHandlerRootView>
   );
 }
 
@@ -901,6 +1103,14 @@ const styles = StyleSheet.create({
     width: width,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  heartOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
+    zIndex: 10, // Ensure it's above other elements but below interactions if needed
   },
   progressBarContainer: {
     position: 'absolute',
