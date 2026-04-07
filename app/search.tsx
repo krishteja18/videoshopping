@@ -1,19 +1,21 @@
 import { supabase } from '@/lib/supabase';
+import { useCartStore } from '@/store/useCartStore';
 import { useSearchStore } from '@/store/useStore';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import React from 'react';
 import {
-  Dimensions,
-  Image,
-  Keyboard,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Dimensions,
+    Image,
+    Keyboard,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -278,26 +280,37 @@ export default function SearchScreen() {
       
       {/* Top Search Bar */}
       <View style={styles.header}>
-        <View style={styles.searchBar}>
-            <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 12, marginRight: 8 }}>
-                <Icon name="arrow-left" size={20} color="#333" />
-            </TouchableOpacity>
-            <TextInput
-                style={styles.input}
-                placeholder="Search products, brands and videos"
-                placeholderTextColor="#999"
-                value={query}
-                onChangeText={handleTextChange}
-                returnKeyType="search"
-                onSubmitEditing={() => handleSearchSubmit()}
-            />
-            {query.length > 0 ? (
-                <TouchableOpacity onPress={handleClearSearch} style={{ marginRight: 12 }}>
-                    <Icon name="x" size={18} color="#999" />
+        <View style={styles.headerTopRow}>
+            <View style={styles.searchBar}>
+                <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 12, marginRight: 8 }}>
+                    <Icon name="arrow-left" size={20} color="#333" />
                 </TouchableOpacity>
-            ) : (
-                <Icon name="mic" size={18} color="#333" style={{ marginRight: 12 }} />
-            )}
+                <TextInput
+                    style={styles.input}
+                    placeholder="Search products, brands and videos"
+                    placeholderTextColor="#999"
+                    value={query}
+                    onChangeText={handleTextChange}
+                    returnKeyType="search"
+                    onSubmitEditing={() => handleSearchSubmit()}
+                />
+                {query.length > 0 ? (
+                    <TouchableOpacity onPress={handleClearSearch} style={{ marginRight: 12 }}>
+                        <Icon name="x" size={18} color="#999" />
+                    </TouchableOpacity>
+                ) : (
+                    <Icon name="mic" size={18} color="#333" style={{ marginRight: 12 }} />
+                )}
+            </View>
+            
+            <TouchableOpacity style={styles.cartButton} onPress={() => router.push('/cart')}>
+                <Ionicons name="cart-outline" size={24} color="#000" />
+                {useCartStore.getState().getItemCount() > 0 && (
+                    <View style={styles.cartBadge}>
+                        <Text style={styles.cartBadgeText}>{useCartStore.getState().getItemCount()}</Text>
+                    </View>
+                )}
+            </TouchableOpacity>
         </View>
       </View>
 
@@ -404,7 +417,13 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     paddingTop: 10,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
@@ -652,6 +671,32 @@ const styles = StyleSheet.create({
     color: '#000',
     paddingHorizontal: 20,
     marginBottom: 15,
+  },
+  cartButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
 });
 

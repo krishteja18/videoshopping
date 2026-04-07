@@ -103,8 +103,10 @@ import 'react-native-reanimated';
 
 import CustomSplashScreen from '@/components/SplashScreenModern';
 import AlertBanner from '@/components/ui/AlertBanner';
+import IncomingCallModal from '@/components/ui/IncomingCallModal';
 import { AlertProvider } from '@/context/AlertContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { supabase } from '@/lib/supabase';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -131,6 +133,9 @@ function Layout() {
     'Nunito-Bold': Nunito_700Bold,
   });
 
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [showIncomingModal, setShowIncomingModal] = useState(false);
+
   // Handle navigation based on session changes
   useEffect(() => {
     if (!isLoading && customSplashFinished) {
@@ -144,6 +149,43 @@ function Layout() {
       }
     }
   }, [session, isLoading, customSplashFinished]);
+
+  // Listen for incoming calls
+  useEffect(() => {
+    if (session?.user?.id) {
+      const channel = supabase
+        .channel('incoming_calls')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'video_calls',
+            filter: `seller_id=eq.${session.user.id}`
+          },
+          async (payload) => {
+            console.log('📞 Incoming call received:', payload.new);
+            
+            // Fetch buyer details for the modal
+            const { data: callData } = await supabase
+              .from('video_calls')
+              .select('*, buyer:profiles!video_calls_buyer_id_fkey(full_name, avatar_url)')
+              .eq('id', payload.new.id)
+              .single();
+              
+            if (callData) {
+              setIncomingCall(callData);
+              setShowIncomingModal(true);
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (loaded) {
@@ -178,9 +220,15 @@ function Layout() {
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="product" options={{ headerShown: false }} />
+        <Stack.Screen name="live-call" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="+not-found" />
       </Stack>
       <AlertBanner />
+      <IncomingCallModal 
+        visible={showIncomingModal} 
+        callData={incomingCall} 
+        onClose={() => setShowIncomingModal(false)} 
+      />
       <StatusBar style="auto" />
     </ThemeProvider>
   );

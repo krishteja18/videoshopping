@@ -1,8 +1,9 @@
 import ProfileView from '@/components/ProfileView';
 import { CommentSheet } from '@/components/ui/CommentSheet';
 import { supabase } from '@/lib/supabase';
+import { useCartStore } from '@/store/useCartStore';
 import { useSearchStore, useUserStore } from '@/store/useStore';
-import { FontAwesome } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import Octicons from '@expo/vector-icons/Octicons';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useFocusEffect } from '@react-navigation/native';
@@ -13,7 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, GestureResponderEvent, Image, PanResponder, Pressable, RefreshControl, Share, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 
@@ -66,6 +67,23 @@ const DUMMY_VIDEOS = [
 const ProductCarousel = ({ products }: { products: any[] }) => {
   const router = useRouter();
   const [activeIndex, setActiveIndex] = useState(0);
+  const { addItem } = useCartStore();
+
+  const handleAddToCart = (product: any) => {
+    // Parse price string "₹7,499" to number
+    const priceNumber = typeof product.price === 'string' 
+      ? parseInt(product.price.replace(/[^0-9]/g, ''), 10)
+      : product.price;
+    
+    addItem({
+      id: String(product.id),
+      title: product.title,
+      price: priceNumber,
+      image: product.image,
+      sellerId: '' 
+    });
+    Alert.alert('Added to Cart', `${product.title} added to your cart.`);
+  };
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
@@ -107,12 +125,20 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
                     <Text style={[styles.ratingText, { opacity: 0.7 }]}>{product.rating?.split(' ').slice(1).join(' ')}</Text>
                   </View>
                 </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity 
-                    style={styles.viewButton}
+                    style={[styles.viewButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
                     onPress={() => router.push(`/product/${product.id}`)}
                   >
-                    <Text style={styles.viewButtonText}>View</Text>
+                    <Text style={[styles.viewButtonText, { color: '#fff' }]}>View</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.viewButton}
+                    onPress={() => handleAddToCart(product)}
+                  >
+                    <Text style={styles.viewButtonText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
               </BlurView>
             </View>
           )}
@@ -134,7 +160,7 @@ const ProductCarousel = ({ products }: { products: any[] }) => {
   );
 };
 
-const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio, onVideoFinished, hideOverlay }: any) => {
+const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensureAudio, onVideoFinished, hideOverlay, onCall }: any) => {
   const [progress, setProgress] = useState(0);
   const isScrubbing = useRef(false);
   const duration = useRef(0);
@@ -145,19 +171,37 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 
   // Heart Animation
   const heartScale = useSharedValue(0);
+  const heartRotate = useSharedValue('0deg');
   
   const heartAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: Math.max(heartScale.value, 0) }],
+    transform: [
+      { scale: Math.max(heartScale.value, 0) },
+      { rotate: heartRotate.value }
+    ],
     opacity: heartScale.value,
   }));
 
   const handleDoubleTapLike = () => {
-    // Animate heart
-    heartScale.value = withSpring(1, undefined, (finished) => {
-      if (finished) {
-        heartScale.value = withDelay(500, withTiming(0));
-      }
-    });
+    // Random rotation for variety (-15deg to +15deg)
+    const rotation = (Math.random() * 30 - 15) + 'deg';
+    heartRotate.value = rotation;
+
+    // Reset scale to 0 instantly if re-triggering (or close to 0)
+    heartScale.value = 0;
+
+    // Animate: Pop In -> Wait -> Fade Out
+    heartScale.value = withSequence(
+      withSpring(1.2, { // Overshoot slightly
+        damping: 10,
+        stiffness: 200, 
+        mass: 0.5 
+      }),
+      withDelay(100, withSpring(1, { // Settle back to 1
+         damping: 12,
+         stiffness: 150
+      })), 
+      withDelay(500, withTiming(0, { duration: 250 })) // Fade out smoothly
+    );
     
     // Trigger like if not already liked (or simply pass the action)
     if (!item.isLiked) {
@@ -304,7 +348,10 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
       <View style={styles.rightActions} pointerEvents="box-none">
 
 
-        <TouchableOpacity style={styles.actionButton}>
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => onCall(item.sellerId)}
+        >
           <Octicons name="device-camera-video" size={24} color="#fff" />
           <Text style={styles.actionLabel}>Call</Text>
         </TouchableOpacity>
@@ -368,7 +415,7 @@ const VideoItem = ({ item, index, currentIndex, muted, setMuted, videoRefs, ensu
 export default function HomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { fetchProfile } = useUserStore();
+  const { fetchProfile, profile: currentUser } = useUserStore();
   const { filteredVideos: searchFilteredVideos } = useSearchStore();
   
   const [activeTab, setActiveTab] = useState('home');
@@ -416,9 +463,17 @@ export default function HomeScreen() {
     }
   };
 
+  // Sync profile changes to feed (e.g. if I updated my avatar, update my videos in feed)
   useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+      if (currentUser && videos.length > 0) {
+          setVideos(prev => prev.map(v => {
+             if (v.sellerId === currentUser.id && v.avatar !== currentUser.avatar_url) {
+                 return { ...v, avatar: currentUser.avatar_url };
+             }
+             return v;
+          }));
+      }
+  }, [currentUser]); // Listen to currentUser updates
 
   const fetchVideos = async () => {
     try {
@@ -433,6 +488,7 @@ export default function HomeScreen() {
           likes_count,
           comments_count,
           shares_count,
+          seller_id,
           seller:profiles!videos_seller_id_fkey (
             username,
             full_name,
@@ -467,6 +523,7 @@ export default function HomeScreen() {
       if (videosData && videosData.length > 0) {
         const formattedVideos = videosData.map((v: any) => ({
           id: v.id,
+          sellerId: v.seller_id,
           username: v.seller?.username ? `@${v.seller.username}` : (v.seller?.full_name || 'Unknown'),
           description: v.description,
           likes: v.likes_count || 0,
@@ -547,6 +604,41 @@ export default function HomeScreen() {
     }
   };
 
+  const handleInitiateCall = async (sellerId: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      Alert.alert('Login Required', 'Please sign in to make a call.');
+      return;
+    }
+
+    if (user.id === sellerId) {
+      Alert.alert('Call Not Possible', 'You cannot call yourself.');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('video_calls')
+        .insert({
+          buyer_id: user.id,
+          seller_id: sellerId,
+          status: 'pending'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      router.push({
+        pathname: '/live-call',
+        params: { callId: data.id }
+      } as any);
+    } catch (error: any) {
+      console.error('Error initiating call:', error);
+      Alert.alert('Connection Failed', 'Unable to initiate call. Please try again later.');
+    }
+  };
+
   useEffect(() => {
     // Only fetch videos if we're not in filtered mode from search
     if (!params.filteredVideos) {
@@ -613,8 +705,8 @@ export default function HomeScreen() {
   const handleSignOut = async () => {
     try {
       try {
-        const isGoogleSignedIn = await GoogleSignin.isSignedIn();
-        if (isGoogleSignedIn) await GoogleSignin.signOut();
+        const currentUser = await GoogleSignin.getCurrentUser();
+        if (currentUser) await GoogleSignin.signOut();
       } catch (e) {}
       await supabase.auth.signOut();
     } catch (e: any) {
@@ -622,19 +714,38 @@ export default function HomeScreen() {
     }
   };
 
-  const renderHeader = () => (
-    <View style={styles.header}>
-      <TouchableOpacity 
-        style={styles.homeSearchBar} 
-        activeOpacity={0.8}
-        onPress={() => router.push('/search' as any)}
-      >
-         <Octicons name="search" size={18} color="rgba(255,255,255,0.7)" />
-         <Text style={styles.homeSearchText}>Search products, brands and videos</Text>
-         <Icon name="mic" size={18} color="rgba(255,255,255,0.7)" />
-      </TouchableOpacity>
-    </View>
-  );
+  const renderHeader = () => {
+    const { getItemCount } = useCartStore();
+    const itemCount = getItemCount();
+
+    return (
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.homeSearchBar} 
+          activeOpacity={0.8}
+          onPress={() => router.push('/search' as any)}
+        >
+           <Octicons name="search" size={18} color="rgba(255,255,255,0.7)" />
+           <Text style={styles.homeSearchText}>Search products, brands and videos</Text>
+           <Icon name="mic" size={18} color="rgba(255,255,255,0.7)" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.cartHeaderButton}
+          onPress={() => router.push('/cart')}
+        >
+          <BlurView intensity={30} tint="dark" style={styles.cartIconWrapper}>
+            <Ionicons name="cart-outline" size={24} color="#fff" />
+            {itemCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{itemCount}</Text>
+              </View>
+            )}
+          </BlurView>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -669,6 +780,7 @@ export default function HomeScreen() {
             ensureAudio={ensureAudio}
             onVideoFinished={handleVideoFinished}
             hideOverlay={showComments}
+            onCall={handleInitiateCall}
           />
         )}
         pagingEnabled
@@ -1135,7 +1247,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)', // Product Card Style
     height: 48,
-    width: '100%',
+    width: '85%',
     borderRadius: 30, 
     borderWidth: .5,
     borderColor: '#fff', // Subtle border for product card look
@@ -1147,5 +1259,37 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     flex: 1,
     fontFamily: 'Nunito-Regular', 
+  },
+  cartHeaderButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+    marginLeft: 10,
+  },
+  cartIconWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#000',
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
 });

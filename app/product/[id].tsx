@@ -1,23 +1,25 @@
 import { supabase } from '@/lib/supabase';
+import { useCartStore } from '@/store/useCartStore';
 import { useUserStore } from '@/store/useStore';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import Feather from '@expo/vector-icons/Feather';
-import Octicons from '@expo/vector-icons/Octicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   FlatList,
   Image,
   ScrollView,
+  Share,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -31,6 +33,70 @@ export default function ProductDetailScreen() {
   const [quantity, setQuantity] = useState(1);
   const [isLiked, setIsLiked] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+
+  useEffect(() => {
+    checkIfLiked();
+  }, [id, profile]);
+
+  const checkIfLiked = async () => {
+    if (!profile || !id) return;
+    try {
+        const { data, error } = await supabase
+            .from('wishlist')
+            .select('*')
+            .eq('user_id', profile.id)
+            .eq('product_id', id)
+            .single();
+        
+        if (data) setIsLiked(true);
+    } catch (e) {
+        // Not in wishlist is expected error for .single()
+    }
+  };
+
+  const handleLike = async () => {
+    if (!profile) {
+        Alert.alert('Login Required', 'Please login to add items to your wishlist.');
+        return;
+    }
+
+    try {
+        if (isLiked) {
+            const { error } = await supabase
+                .from('wishlist')
+                .delete()
+                .eq('user_id', profile.id)
+                .eq('product_id', id);
+            
+            if (error) throw error;
+            setIsLiked(false);
+        } else {
+            const { error } = await supabase
+                .from('wishlist')
+                .insert({
+                    user_id: profile.id,
+                    product_id: id
+                });
+            
+            if (error) throw error;
+            setIsLiked(true);
+        }
+    } catch (error: any) {
+        Alert.alert('Error', error.message || 'Failed to update wishlist');
+    }
+  };
+
+  const handleShare = async () => {
+    if (!product) return;
+    try {
+        const result = await Share.share({
+            message: `Check out ${product.title} on SwipeKart! ₹${product.price}`,
+            url: `https://swipekart.app/product/${id}` // Fallback link
+        });
+    } catch (error: any) {
+        Alert.alert('Error', error.message);
+    }
+  };
 
   // Dynamic Variants State
   const [variantGroups, setVariantGroups] = useState<{ name: string; values: string[] }[]>([]);
@@ -177,9 +243,41 @@ export default function ProductDetailScreen() {
 
   const currentImages = getFilteredImages();
 
-  const handleAddToCart = async () => {
-    // Implement Add to Cart logic here
-    alert('Added to cart!');
+  const { addItem, getItemCount } = useCartStore();
+  const itemCount = getItemCount();
+
+  const handleAddToCart = () => {
+    if (!product) return;
+
+    addItem({
+      id: product.id,
+      title: product.title,
+      price: product.price,
+      image: currentImages[0] || product.image_url,
+      sellerId: product.seller_id,
+    });
+    
+    // Add multiple quantities if selected
+    if (quantity > 1) {
+        for (let i = 1; i < quantity; i++) {
+            addItem({
+                id: product.id,
+                title: product.title,
+                price: product.price,
+                image: currentImages[0] || product.image_url,
+                sellerId: product.seller_id,
+            });
+        }
+    }
+
+    Alert.alert(
+      'Added to Cart',
+      `${quantity}x ${product.title} added to your cart.`,
+      [
+        { text: 'Continue Shopping' },
+        { text: 'View Cart', onPress: () => router.push('/cart') }
+      ]
+    );
   };
 
   if (loading) {
@@ -203,7 +301,40 @@ export default function ProductDetailScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ headerShown: false }} />
+      <Stack.Screen 
+        options={{ 
+          headerShown: true,
+          headerTransparent: true,
+          headerTitle: '',
+          headerLeft: () => (
+            <TouchableOpacity style={styles.headerIconButton} onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={24} color="#fff" />
+            </TouchableOpacity>
+          ),
+          headerRight: () => (
+            <View style={styles.headerRightContainer}>
+              <TouchableOpacity style={styles.headerIconButton} onPress={handleLike}>
+                <Ionicons 
+                  name={isLiked ? "heart" : "heart-outline"} 
+                  size={24} 
+                  color={isLiked ? "#FF3B30" : "#fff"} 
+                />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerIconButton} onPress={handleShare}>
+                <Ionicons name="share-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerIconButton} onPress={() => router.push('/cart')}>
+                <Ionicons name="cart-outline" size={24} color="#fff" />
+                {itemCount > 0 && (
+                  <View style={styles.cartBadgeSmall}>
+                    <Text style={styles.cartBadgeTextSmall}>{itemCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          ),
+        }} 
+      />
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -248,20 +379,6 @@ export default function ProductDetailScreen() {
               </View>
           )}
           
-          {/* Header Actions */}
-          <SafeAreaView style={styles.headerActions}>
-            <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
-              <Octicons name="chevron-left" size={24} color="#fff" />
-            </TouchableOpacity>
-            <View style={styles.rightIcons}>
-              <TouchableOpacity style={styles.iconButton} onPress={() => setIsLiked(!isLiked)}>
-                <Octicons name={isLiked ? "heart-fill" : "heart"} size={18} color={isLiked ? "#FF4B4B" : "#fff"} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
-                 <Octicons name="share-android" size={24} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          </SafeAreaView>
         </View>
 
         {/* Content Section */}
@@ -500,7 +617,39 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
-    backdropFilter: 'blur(10px)', // iOS only
+  },
+  headerIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+  },
+  headerRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  cartBadgeSmall: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 2,
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  cartBadgeTextSmall: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
   },
   contentContainer: {
     flex: 1,
